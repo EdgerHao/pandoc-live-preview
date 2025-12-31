@@ -1,10 +1,9 @@
-/* main.js - Pandoc Live Preview Plugin (No Parentheses) */
+/* main.js - Pandoc Live Preview Plugin (Fix: Support Attributes) */
 const { Plugin } = require('obsidian');
 const { StateField, EditorState } = require('@codemirror/state');
 const { Decoration, EditorView, WidgetType } = require('@codemirror/view');
 
 // === 配置区域 ===
-// 如果你想要 "图 1" (中间有空格)，请把下面的 "图" 改成 "图 "
 const FIGURE_PREFIX = "图"; 
 const TABLE_PREFIX = "表";
 
@@ -20,7 +19,6 @@ class LabelWidget extends WidgetType {
     toDOM(view) {
         const span = document.createElement("span");
         span.innerText = this.text;
-        // 类名结构: pandoc-widget + 类型 + 是否定义
         span.className = `pandoc-widget pandoc-${this.type} pandoc-${this.isDef ? 'def' : 'ref'}`;
         return span;
     }
@@ -34,8 +32,11 @@ function buildIndex(doc) {
     let tblCount = 0;
     let text = doc.toString();
 
-    // 扫描定义：{#fig:xxx} 或 {#tbl:xxx}
-    const regex = /\{#(fig|tbl):([a-zA-Z0-9_\-]+)\}/g;
+    // 扫描定义：{#fig:xxx ...} 或 {#tbl:xxx ...}
+    // 修改说明：
+    // 1. ([a-zA-Z0-9_\-]+) 匹配 ID
+    // 2. (?:\s+.*?)? 非捕获组，匹配 ID 后面的空格和属性 (例如 width=14cm)，非贪婪模式
+    const regex = /\{#(fig|tbl):([a-zA-Z0-9_\-]+)(?:\s+.*?)?\}/g;
     let match;
 
     while ((match = regex.exec(text)) !== null) {
@@ -59,7 +60,6 @@ const pandocRefField = StateField.define({
         return Decoration.none;
     },
     update(oldDecorations, transaction) {
-        // 检测文档变化或光标移动
         if (!transaction.docChanged && !transaction.selection) return oldDecorations;
 
         const state = transaction.state;
@@ -71,7 +71,6 @@ const pandocRefField = StateField.define({
         // 1. 构建索引
         const { figMap, tblMap } = buildIndex(doc);
 
-        // 辅助函数：检查光标是否碰到
         function checkCursorOverlap(start, end) {
             for (const range of selectionRanges) {
                 if (range.from <= end && range.to >= start) {
@@ -81,14 +80,13 @@ const pandocRefField = StateField.define({
             return false;
         }
 
-        // 辅助函数：生成装饰器
         function addDecoration(match, isDef) {
             const start = match.index;
             const end = match.index + match[0].length;
-            const type = match[1];
-            const id = match[2];
+            
+            const type = match[1]; 
+            const id = match[2];   
 
-            // 如果光标碰到这里，显示源代码，不渲染
             if (checkCursorOverlap(start, end)) return;
 
             let number = "?";
@@ -102,8 +100,6 @@ const pandocRefField = StateField.define({
                 if (tblMap.has(id)) number = tblMap.get(id);
             }
 
-            // === 核心修改在这里 ===
-            // 去掉了左右的括号，直接显示 "图1"
             const displayText = `${prefix}${number}`;
 
             const deco = Decoration.replace({
@@ -114,15 +110,18 @@ const pandocRefField = StateField.define({
             widgets.push(deco);
         }
 
-        // === A. 处理定义 {#fig:xxx} ===
-        const defRegex = /\{#(fig|tbl):([a-zA-Z0-9_\-]+)\}/g;
+        // === A. 处理定义 {#fig:xxx width=50%} ===
+        // 使用更新后的正则，允许花括号内有额外内容
+        const defRegex = /\{#(fig|tbl):([a-zA-Z0-9_\-]+)(?:\s+.*?)?\}/g;
         let defMatch;
         while ((defMatch = defRegex.exec(text)) !== null) {
             addDecoration(defMatch, true);
         }
 
-        // === B. 处理引用 @fig:xxx ===
-        const refRegex = /@(fig|tbl):([a-zA-Z0-9_\-]+)/g;
+        // === B. 处理引用 @fig:xxx (吞空格版) ===
+        // 引用处通常不带 width 属性，所以保持原样，只负责吞空格
+        const refRegex = / ?@(fig|tbl):([a-zA-Z0-9_\-]+) ?/g;
+        
         let refMatch;
         while ((refMatch = refRegex.exec(text)) !== null) {
             addDecoration(refMatch, false);
