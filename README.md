@@ -56,8 +56,11 @@ To get the full academic writing preview experience (Citations + Cross-reference
 ## ✨ 核心功能
 
 - **实时渲染**：在编辑界面（Live Preview）直接将代码 `@fig:xxx` 渲染为 **图1**，将 `@tbl:xxx` 渲染为 **表1**。
+![](https://wanxinhao88.oss-cn-wuhan-lr.aliyuncs.com/img/20251231135057667.png)
 - **⚡ 智能补全**：输入 **`@`** 自动弹出文档内所有图表 ID 的建议菜单，告别死记硬背 ID 的痛苦。
+![](https://wanxinhao88.oss-cn-wuhan-lr.aliyuncs.com/img/20251231190922619.png)
 - **⚡ 一键生成 ID**：提供快捷命令插入基于“年月日时分”的唯一 ID（如 `{#fig:202512311800}`），无需手动命名。
+![](https://wanxinhao88.oss-cn-wuhan-lr.aliyuncs.com/img/20251231191509696.png)
 - **点击即改**：鼠标点击渲染后的“图1”标签，或将光标移入，它会瞬间变回 `@fig:xxx` 源代码模式。
 - **属性支持**：完美支持带属性的写法，如 `{#fig:id width=14cm}`，不会因为加了宽度就失效。
 - **无缝排版**：自动隐藏 Pandoc 语法建议保留的空格，让中文引用在视觉上连贯流畅。
@@ -95,3 +98,4 @@ To get the full academic writing preview experience (Citations + Cross-reference
 ```javascript
 const FIGURE_PREFIX = "图";  // 可改为 "Fig. "
 const TABLE_PREFIX = "表";   // 可改为 "Table "
+
