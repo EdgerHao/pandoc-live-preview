@@ -1,15 +1,17 @@
 # Pandoc Live Preview for Obsidian
 
-[中文说明](#中文说明) | [Report Bug](https://github.com/EdgerHao/pandoc-live-preview/issues)
+[中文说明](#中文说明) | [Report Bug](https://github.com/yourusername/pandoc-live-preview/issues)
 
 This is an Obsidian plugin that provides **real-time preview** for Pandoc citations and cross-references. It is specifically optimized for **Academic Writing** workflows involving Pandoc and CJK (Chinese/Japanese/Korean) layouts.
 
 ## ✨ Features
 
 - **Real-time Rendering**: Instantly turns `@fig:id` into readable labels like **图1** (Figure 1) or **表1** (Table 1) in Live Preview mode.
+- **⚡ Smart Autocomplete**: Type `@` to trigger a suggestion menu of all figures and tables in your document. No need to memorize long IDs!
+- **⚡ Quick ID Generation**: Use commands to insert unique, timestamp-based IDs (e.g., `{#fig:202501011200}`) instantly.
 - **Interactive Editing**: Just **click** on the rendered label (e.g., `图1`) to reveal the source code (e.g., `@fig:id`) for editing. Move the cursor away to render it again.
 - **Smart Spacing**: Automatically hides spaces around citations (e.g., `... as shown in @fig:a ...` becomes `...如图1所示...`), perfect for Chinese typesetting.
-- **Visual Distinction**: distinctive styles for Definitions (Source `{#...}`) and References (Links `@...`).
+- **Attribute Support**: Correctly recognizes image attributes like `{#fig:id width=80%}`.
 
 ## 📥 How to Install
 
@@ -27,13 +29,21 @@ This is an Obsidian plugin that provides **real-time preview** for Pandoc citati
 ## 🚀 Usage
 
 **1. Define a Figure or Table:**
-Add a Pandoc ID `{#fig:name}` or `{#tbl:name}` after your image or table.
-> Result: `{#fig:test}` renders as **(图1)**
+* **Manual**: Add a Pandoc ID `{#fig:name}` after your image.
+* **Automatic (Recommended)**: Use the command palette (`Ctrl/Cmd + P`) and search for **"Insert Figure ID"**. It will insert a unique ID based on the current time, like `{#fig:202512311844}`.
+    * *Tip: Bind this command to a hotkey (e.g., `Alt+F`) for maximum speed.*
 
 **2. Reference it:**
-Use `@fig:name` or `@tbl:name` anywhere in your text.
-> Result: `@fig:test` renders as **图1**
-![](https://wanxinhao88.oss-cn-wuhan-lr.aliyuncs.com/img/20251231135057667.png)
+Type **`@`** anywhere in your text. A menu will appear listing all defined figures and tables. Select one to insert the citation.
+> Result: `@fig:2025...` renders as **图1**
+
+## 🤝 Recommended
+
+To get the full academic writing preview experience (Citations + Cross-references), we highly recommend using this plugin alongside:
+
+* **[Pandoc Reference List](https://github.com/mgmeyers/obsidian-pandoc-reference-list)**
+    * It handles bibliography citations like `(Smith, 2021)` and displays a reference list in the sidebar.
+
 ---
 
 <a name="中文说明"></a>
@@ -46,18 +56,18 @@ Use `@fig:name` or `@tbl:name` anywhere in your text.
 ## ✨ 核心功能
 
 - **实时渲染**：在编辑界面（Live Preview）直接将代码 `@fig:xxx` 渲染为 **图1**，将 `@tbl:xxx` 渲染为 **表1**。
-- **点击即改**：鼠标点击渲染后的“图1”标签，或将光标移入，它会瞬间变回 `@fig:xxx` 源代码模式，方便你修改 ID。
+- **⚡ 智能补全**：输入 **`@`** 自动弹出文档内所有图表 ID 的建议菜单，告别死记硬背 ID 的痛苦。
+- **⚡ 一键生成 ID**：提供快捷命令插入基于“年月日时分”的唯一 ID（如 `{#fig:202512311800}`），无需手动命名。
+- **点击即改**：鼠标点击渲染后的“图1”标签，或将光标移入，它会瞬间变回 `@fig:xxx` 源代码模式。
+- **属性支持**：完美支持带属性的写法，如 `{#fig:id width=14cm}`，不会因为加了宽度就失效。
 - **无缝排版**：自动隐藏 Pandoc 语法建议保留的空格，让中文引用在视觉上连贯流畅。
-- **视觉区分**：
-  - **定义处**（如图片下方的 `{#fig:a}`）：显示为深色加粗的 **(图1)**，表示这是锚点。
-  - **引用处**（如正文中的 `@fig:a`）：显示为标准颜色的 **图1**，表示这是链接。
 
 ## 📥 安装方法
 
 ### 方法 1：使用 BRAT 插件（推荐）
 1. 在 Obsidian 社区插件市场搜索并安装 **BRAT**。
 2. 在 BRAT 设置中点击 "Add Beta plugin"。
-3. 输入本仓库地址：`https://github.com/EdgerHao/pandoc-live-preview` 。
+3. 输入本仓库地址：`https://github.com/yourusername/pandoc-live-preview` (请替换为你的真实 GitHub 地址)。
 4. 点击添加，插件即可自动安装。
 
 ### 方法 2：手动安装
@@ -66,6 +76,17 @@ Use `@fig:name` or `@tbl:name` anywhere in your text.
 3. 将下载的三个文件放入该文件夹。
 4. 重启 Obsidian 并启用插件。
 
+## 🚀 使用方法
+
+**1. 定义图表 ID**
+* **手动输入**：在图片或表格后输入 `{#fig:name}`。
+* **快捷生成（推荐）**：打开命令面板 (`Ctrl/Cmd + P`)，搜索 **"插入图片ID" (Insert Figure ID)**。插件会自动生成一个基于当前时间的唯一 ID。
+    * *建议：在设置里将此命令绑定快捷键（如 `Alt+F`），效率起飞。*
+
+**2. 引用图表**
+在正文中输入 **`@`** 符号，插件会自动弹出候选菜单，列出当前文档里所有的图和表。选中即可插入。
+> 效果：输入 `@fig:xxx` 后，光标移开即显示为 **图1**。
+
 ## ⚙️ 自定义配置
 
 目前插件默认前缀为中文的“图”和“表”。
@@ -73,15 +94,4 @@ Use `@fig:name` or `@tbl:name` anywhere in your text.
 
 ```javascript
 const FIGURE_PREFIX = "图";  // 可改为 "Fig. "
-
 const TABLE_PREFIX = "表";   // 可改为 "Table "
-```
-
-## 🤝 推荐搭配
-为了获得完整的学术写作预览体验（参考文献 + 交叉引用），强烈推荐配合以下插件使用：
-
-[Pandoc Reference List](https://github.com/mgmeyers/obsidian-pandoc-reference-list)
-
-它可以预览 (Smith, 2021) 格式的参考文献，并在侧边栏显示文献列表。配合本插件，图表和文献都能实时预览。
-
-
