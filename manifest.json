@@ -1,11 +1,10 @@
 {
 	"id": "pandoc-live-preview",
 	"name": "Pandoc Live Preview",
-	"version": "1.0.0",
+	"version": "1.5.0",
 	"minAppVersion": "0.15.0",
-	"description": "Real-time preview for Pandoc citations (@fig:xxx -> 图 1).",
-	"author": "EdgerHao",
-	"authorUrl": "",
+	"description": "Real-time preview for Pandoc citations (@fig:id) and auto-upload images to PicGo.",
+	"author": "你的名字",
+	"authorUrl": "https://github.com/你的用户名",
 	"isDesktopOnly": false
-
 }
