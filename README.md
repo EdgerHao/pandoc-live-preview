@@ -40,10 +40,12 @@ Type **`@`** anywhere in your text. A menu will appear listing all defined figur
 ## 🤝 Recommended
 
 To get the full academic writing preview experience (Citations + Cross-references), we highly recommend using this plugin alongside:
-
-* **[Pandoc Reference List](https://github.com/mgmeyers/obsidian-pandoc-reference-list)**
+* **  [Pandoc Reference List](https://github.com/mgmeyers/obsidian-pandoc-reference-list)**
     * It handles bibliography citations like `(Smith, 2021)` and displays a reference list in the sidebar.
-
+ 
+⚠️ This project will offer a better user experience when paired with [PaperBell] (https://github.com/PaperBell-Org/Obsidian-PaperBell).
+    
+ 
 ---
 
 <a name="中文说明"></a>
@@ -99,5 +101,14 @@ To get the full academic writing preview experience (Citations + Cross-reference
 ```javascript
 const FIGURE_PREFIX = "图";  // 可改为 "Fig. "
 const TABLE_PREFIX = "表";   // 可改为 "Table "
+```
+## 🤝 推荐
+若要获得完整的学术写作预览体验（包括引用和交叉引用），我们强烈建议您同时使用以下插件：
+* **[Pandoc 参考列表](https://github.com/mgmeyers/obsidian-pandoc-reference-list)** 
+* 它能够处理诸如 `(Smith, 2021)` 这样的参考文献引用，并在侧边栏中显示参考列表。
+
+*⚠️ 该项目若与 [PaperBell]（https://github.com/PaperBell-Org/Obsidian-PaperBell） 结合使用，会有更好的使用体验。
+* PaperBell: Research, to be connected
+* 👋 PaperBell 是使用 Obsidian 管理你学术生涯的终极方案。
 
 
