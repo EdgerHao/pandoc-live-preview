@@ -1,0 +1,56 @@
+/* === 1. 基础公共样式 === */
+.pandoc-widget {
+    display: inline-block;
+    padding: 0 4px;
+    border-radius: 4px;
+    font-size: 0.9em;
+    font-weight: 500;
+    cursor: text;       /* 鼠标变成输入样式，提示可编辑 */
+    user-select: none;  /* 禁止选中标签内的文字 */
+    transition: all 0.2s ease;
+    margin: 0 2px;
+}
+
+/* === 2. 图片 (Figure) 的配色方案：蓝色系 === */
+
+/* 图片【定义处】：{#fig:xxx} -> (图1) */
+/* 使用深蓝色 + 虚线边框，表示这是“源头” */
+.pandoc-fig.pandoc-def {
+    color: #0d47a1;                 /* 深蓝色文字 */
+    background-color: #e3f2fd;      /* 极浅蓝背景 */
+    border: 1px dashed #1565c0;     /* 蓝色虚线边框 */
+    font-weight: bold;              /* 加粗 */
+}
+
+/* 图片【引用处】：@fig:xxx -> (图1) */
+/* 使用普通蓝色 + 实线边框，表示这是“链接” */
+.pandoc-fig.pandoc-ref {
+    color: #2196f3;                 /* 标准蓝文字 */
+    background-color: rgba(33, 150, 243, 0.1); /* 浅蓝透明背景 */
+    border: 1px solid rgba(33, 150, 243, 0.3); /* 浅蓝实线边框 */
+}
+
+/* === 3. 表格 (Table) 的配色方案：橙色系 (与蓝色形成对比) === */
+/* 如果你也想表格是蓝色，把下面的颜色代码改成和上面一样即可 */
+
+/* 表格【定义处】：{#tbl:xxx} -> (表1) */
+.pandoc-tbl.pandoc-def {
+    color: #e65100;                 /* 深橙色 */
+    background-color: #fff3e0;      /* 极浅橙背景 */
+    border: 1px dashed #ef6c00;     /* 橙色虚线边框 */
+    font-weight: bold;
+}
+
+/* 表格【引用处】：@tbl:xxx -> (表1) */
+.pandoc-tbl.pandoc-ref {
+    color: #ff9800;                 /* 标准橙 */
+    background-color: rgba(255, 152, 0, 0.1);
+    border: 1px solid rgba(255, 152, 0, 0.3);
+}
+
+/* === 4. 鼠标悬停通用效果 === */
+.pandoc-widget:hover {
+    opacity: 0.8;
+    transform: translateY(-1px); /* 微微上浮 */
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1); /* 加一点阴影 */
+}
