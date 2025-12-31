@@ -33,7 +33,7 @@ Add a Pandoc ID `{#fig:name}` or `{#tbl:name}` after your image or table.
 **2. Reference it:**
 Use `@fig:name` or `@tbl:name` anywhere in your text.
 > Result: `@fig:test` renders as **图1**
-
+![](https://wanxinhao88.oss-cn-wuhan-lr.aliyuncs.com/img/20251231135057667.png)
 ---
 
 <a name="中文说明"></a>
@@ -73,4 +73,5 @@ Use `@fig:name` or `@tbl:name` anywhere in your text.
 
 ```javascript
 const FIGURE_PREFIX = "图";  // 可改为 "Fig. "
+
 const TABLE_PREFIX = "表";   // 可改为 "Table "
