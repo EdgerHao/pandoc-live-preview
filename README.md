@@ -75,3 +75,12 @@ Use `@fig:name` or `@tbl:name` anywhere in your text.
 const FIGURE_PREFIX = "图";  // 可改为 "Fig. "
 
 const TABLE_PREFIX = "表";   // 可改为 "Table "
+```
+
+## 🤝 推荐搭配
+为了获得完整的学术写作预览体验（参考文献 + 交叉引用），强烈推荐配合以下插件使用：
+
+Pandoc Reference List
+
+它可以预览 (Smith, 2021) 格式的参考文献，并在侧边栏显示文献列表。配合本插件，图表和文献都能实时预览。
+
