@@ -53,4 +53,17 @@
     opacity: 0.8;
     transform: translateY(-1px); /* 微微上浮 */
     box-shadow: 0 2px 4px rgba(0,0,0,0.1); /* 加一点阴影 */
+
+}
+
+/* === 自动补全菜单样式 === */
+.pandoc-suggest-label {
+    font-weight: bold;
+    color: var(--text-accent); /* 使用 Obsidian 主题色 */
+    margin-right: 8px;
+}
+
+.pandoc-suggest-id {
+    color: var(--text-muted);
+    font-size: 0.85em;
 }
