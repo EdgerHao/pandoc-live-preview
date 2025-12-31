@@ -1,11 +1,17 @@
-/* main.js - Pandoc Live Preview Plugin (Ultimate: Render + Command + Autocomplete) */
-const { Plugin, EditorSuggest } = require('obsidian');
+/* main.js - Pandoc Live Preview Plugin (v1.5.0: Stable PicGo Upload) */
+const { Plugin, EditorSuggest, requestUrl, Notice, PluginSettingTab, Setting, FileSystemAdapter } = require('obsidian');
 const { StateField, EditorState } = require('@codemirror/state');
 const { Decoration, EditorView, WidgetType } = require('@codemirror/view');
+const path = require('path'); // 引入 path 模块处理路径
 
-// === 配置区域 ===
-const FIGURE_PREFIX = "图"; 
-const TABLE_PREFIX = "表";
+// === 默认设置 ===
+const DEFAULT_SETTINGS = {
+    picgoUrl: "http://127.0.0.1:36677/upload",
+    autoUpload: true,
+    deleteLocal: true,
+    figPrefix: "图",
+    tblPrefix: "表"
+};
 
 // === 辅助函数：生成时间戳 ===
 function getTimestamp() {
@@ -15,7 +21,8 @@ function getTimestamp() {
     const day = now.getDate().toString().padStart(2, '0');
     const hour = now.getHours().toString().padStart(2, '0');
     const minute = now.getMinutes().toString().padStart(2, '0');
-    return `${year}${month}${day}${hour}${minute}`;
+    const second = now.getSeconds().toString().padStart(2, '0');
+    return `${year}${month}${day}${hour}${minute}${second}`;
 }
 
 // === 1. 定义组件 Widget ===
@@ -35,13 +42,17 @@ class LabelWidget extends WidgetType {
     }
 }
 
-// === 2. 建立索引逻辑 (独立出来，供渲染和补全共用) ===
-function scanDefinitions(text) {
+// === 2. 建立索引逻辑 ===
+let currentSettings = Object.assign({}, DEFAULT_SETTINGS);
+
+function scanDefinitions(text, settings) {
     const definitions = [];
     let figCount = 0;
     let tblCount = 0;
+    
+    const FIG_PRE = settings.figPrefix;
+    const TBL_PRE = settings.tblPrefix;
 
-    // 正则：匹配 {#fig:xxx} 或 {#tbl:xxx}
     const regex = /\{#(fig|tbl):([a-zA-Z0-9_\-]+)(?:\s+.*?)?\}/g;
     let match;
 
@@ -52,10 +63,10 @@ function scanDefinitions(text) {
 
         if (type === 'fig') {
             figCount++;
-            label = `${FIGURE_PREFIX}${figCount}`;
+            label = `${FIG_PRE}${figCount}`;
         } else if (type === 'tbl') {
             tblCount++;
-            label = `${TABLE_PREFIX}${tblCount}`;
+            label = `${TBL_PRE}${tblCount}`;
         }
 
         definitions.push({
@@ -68,7 +79,7 @@ function scanDefinitions(text) {
     return definitions;
 }
 
-// === 3. 核心装饰器 (渲染逻辑) ===
+// === 3. 核心装饰器 ===
 const pandocRefField = StateField.define({
     create(state) {
         return Decoration.none;
@@ -81,14 +92,16 @@ const pandocRefField = StateField.define({
         const widgets = [];
         const selectionRanges = state.selection.ranges;
 
-        // 1. 获取所有定义，建立 Map 方便查询
-        const defs = scanDefinitions(text);
+        const defs = scanDefinitions(text, currentSettings);
         const figMap = new Map();
         const tblMap = new Map();
         
+        const FIG_PRE = currentSettings.figPrefix;
+        const TBL_PRE = currentSettings.tblPrefix;
+        
         defs.forEach(def => {
-            if (def.type === 'fig') figMap.set(def.id, def.label.replace(FIGURE_PREFIX, ''));
-            if (def.type === 'tbl') tblMap.set(def.id, def.label.replace(TABLE_PREFIX, ''));
+            if (def.type === 'fig') figMap.set(def.id, def.label.replace(FIG_PRE, ''));
+            if (def.type === 'tbl') tblMap.set(def.id, def.label.replace(TBL_PRE, ''));
         });
 
         function checkCursorOverlap(start, end) {
@@ -105,10 +118,10 @@ const pandocRefField = StateField.define({
             let prefix = "";
 
             if (type === 'fig') {
-                prefix = FIGURE_PREFIX;
+                prefix = FIG_PRE;
                 if (figMap.has(id)) number = figMap.get(id);
             } else if (type === 'tbl') {
-                prefix = TABLE_PREFIX;
+                prefix = TBL_PRE;
                 if (tblMap.has(id)) number = tblMap.get(id);
             }
 
@@ -120,14 +133,12 @@ const pandocRefField = StateField.define({
             widgets.push(deco);
         }
 
-        // A. 处理定义
         const defRegex = /\{#(fig|tbl):([a-zA-Z0-9_\-]+)(?:\s+.*?)?\}/g;
         let defMatch;
         while ((defMatch = defRegex.exec(text)) !== null) {
             addDecoration(defMatch.index, defMatch.index + defMatch[0].length, defMatch[1], defMatch[2], true);
         }
 
-        // B. 处理引用 (吞空格)
         const refRegex = / ?@(fig|tbl):([a-zA-Z0-9_\-]+) ?/g;
         let refMatch;
         while ((refMatch = refRegex.exec(text)) !== null) {
@@ -139,7 +150,7 @@ const pandocRefField = StateField.define({
     provide: (field) => EditorView.decorations.from(field)
 });
 
-// === 4. 自动补全建议类 (NEW!) ===
+// === 4. 自动补全建议类 ===
 class PandocSuggest extends EditorSuggest {
     constructor(plugin) {
         super(plugin.app);
@@ -147,19 +158,14 @@ class PandocSuggest extends EditorSuggest {
     }
 
     onTrigger(cursor, editor, file) {
-        // 当用户输入 @ 时触发
         const line = editor.getLine(cursor.line);
         const sub = line.substring(0, cursor.ch);
-        
-        // 匹配 @ 或者 @fig 或者 @tbl
-        // 这里的正则逻辑是：捕捉 @ 符号后面跟着可选的 fig/tbl 和可选的冒号
         const match = sub.match(/(@(fig|tbl)?:?([a-zA-Z0-9_\-]*))$/);
-
         if (match) {
             return {
                 start: { line: cursor.line, ch: match.index },
                 end: cursor,
-                query: match[0] // 比如 "@" 或 "@fig"
+                query: match[0]
             };
         }
         return null;
@@ -167,73 +173,190 @@ class PandocSuggest extends EditorSuggest {
 
     getSuggestions(context) {
         const text = context.editor.getValue();
-        // 扫描全文找到所有定义
-        const defs = scanDefinitions(text);
+        const defs = scanDefinitions(text, this.plugin.settings);
         const query = context.query.toLowerCase();
 
-        // 过滤建议
         return defs.filter(def => {
-            // 如果用户只输入 @，显示所有
-            // 如果用户输入 @fig，只显示 fig
-            // 构造备选词：@fig:id
             const suggestion = `@${def.type}:${def.id}`;
             return suggestion.toLowerCase().includes(query);
         }).map(def => ({
-            ...def, // 继承 id, type, label
-            suggestionText: `@${def.type}:${def.id}` // 最终要插入的文本
+            ...def,
+            suggestionText: `@${def.type}:${def.id}`
         }));
     }
 
     renderSuggestion(suggestion, el) {
-        // 自定义下拉菜单的样式
-        // 左边显示：图1
-        // 右边显示：ID (2025...)
-        el.createEl("span", { text: suggestion.label, cls: "pandoc-suggest-label" }); // 图1
-        el.createEl("small", { text: ` (${suggestion.id})`, cls: "pandoc-suggest-id" }); // ID
+        el.createEl("span", { text: suggestion.label, cls: "pandoc-suggest-label" }); 
+        el.createEl("small", { text: ` (${suggestion.id})`, cls: "pandoc-suggest-id" });
     }
 
     selectSuggestion(suggestion, event) {
         const context = this.context;
         if (!context) return;
-        
-        // 插入时，如果是 fig 或 tbl，我们可以顺便加上空格处理（如果需要的话）
-        // 这里简单处理，直接替换为 @fig:xxx
-        const textToInsert = suggestion.suggestionText; 
-        
-        context.editor.replaceRange(
-            textToInsert,
-            context.start,
-            context.end
-        );
+        context.editor.replaceRange(suggestion.suggestionText, context.start, context.end);
     }
 }
 
-// === 5. 插件主类 ===
+// === 5. 设置面板 ===
+class PandocLivePreviewSettingTab extends PluginSettingTab {
+    constructor(app, plugin) {
+        super(app, plugin);
+        this.plugin = plugin;
+    }
+
+    display() {
+        const { containerEl } = this;
+        containerEl.empty();
+        containerEl.createEl('h2', { text: 'Pandoc Live Preview 设置' });
+
+        new Setting(containerEl)
+            .setName('PicGo 上传接口')
+            .setDesc('默认: http://127.0.0.1:36677/upload')
+            .addText(text => text
+                .setPlaceholder('http://127.0.0.1:36677/upload')
+                .setValue(this.plugin.settings.picgoUrl)
+                .onChange(async (value) => {
+                    this.plugin.settings.picgoUrl = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName('剪切板自动上传')
+            .setDesc('粘贴图片时，自动上传到 PicGo。')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.autoUpload)
+                .onChange(async (value) => {
+                    this.plugin.settings.autoUpload = value;
+                    await this.plugin.saveSettings();
+                }));
+        
+        new Setting(containerEl)
+            .setName('上传后移除本地文件')
+            .setDesc('开启：上传成功后删除本地临时文件。关闭：保留本地备份。')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.deleteLocal)
+                .onChange(async (value) => {
+                    this.plugin.settings.deleteLocal = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        containerEl.createEl('h3', { text: '前缀显示设置' });
+        new Setting(containerEl).setName('图片前缀').addText(text => text.setValue(this.plugin.settings.figPrefix).onChange(async (value) => {
+            this.plugin.settings.figPrefix = value; currentSettings.figPrefix = value; await this.plugin.saveSettings(); this.plugin.app.workspace.updateOptions(); 
+        }));
+        new Setting(containerEl).setName('表格前缀').addText(text => text.setValue(this.plugin.settings.tblPrefix).onChange(async (value) => {
+            this.plugin.settings.tblPrefix = value; currentSettings.tblPrefix = value; await this.plugin.saveSettings(); this.plugin.app.workspace.updateOptions();
+        }));
+    }
+}
+
+// === 6. 插件主类 (修复上传逻辑) ===
 module.exports = class PandocLivePreview extends Plugin {
     async onload() {
-        // 注册渲染
+        await this.loadSettings();
+        currentSettings = this.settings;
         this.registerEditorExtension(pandocRefField);
-
-        // 注册命令 (生成时间戳ID)
+        this.registerEditorSuggest(new PandocSuggest(this));
+        this.addSettingTab(new PandocLivePreviewSettingTab(this.app, this));
+        
         this.addCommand({
             id: 'insert-fig-id-timestamp',
             name: '插入图片ID (Insert Figure ID)',
             editorCallback: (editor) => {
-                const timestamp = getTimestamp();
-                editor.replaceSelection(`{#fig:${timestamp}}`);
+                editor.replaceSelection(`{#fig:${getTimestamp()}}`);
             }
         });
-
         this.addCommand({
             id: 'insert-tbl-id-timestamp',
             name: '插入表格ID (Insert Table ID)',
             editorCallback: (editor) => {
-                const timestamp = getTimestamp();
-                editor.replaceSelection(`{#tbl:${timestamp}}`);
+                editor.replaceSelection(`{#tbl:${getTimestamp()}}`);
             }
         });
+        this.registerEvent(this.app.workspace.on('editor-paste', this.handleImagePaste.bind(this)));
+    }
 
-        // 注册自动补全 (NEW!)
-        this.registerEditorSuggest(new PandocSuggest(this));
+    async loadSettings() { this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData()); }
+    async saveSettings() { await this.saveData(this.settings); }
+
+    // === PicGo 上传逻辑 (文件路径版) ===
+    async handleImagePaste(evt, editor, view) {
+        if (!this.settings.autoUpload) return;
+
+        if (evt.clipboardData.files.length > 0) {
+            const file = evt.clipboardData.files[0];
+            
+            if (file.type.startsWith('image/')) {
+                evt.preventDefault();
+                evt.stopPropagation();
+                
+                const timestamp = getTimestamp();
+                const placeholder = `![Uploading...](${timestamp})`;
+                editor.replaceSelection(placeholder);
+                
+                try {
+                    // 1. 先将文件保存到 Vault 本地 (作为临时文件)
+                    const arrayBuffer = await file.arrayBuffer();
+                    const extension = file.type.split('/')[1] || 'png';
+                    const fileName = `Image_${timestamp}.${extension}`;
+                    
+                    // 获取 Obsidian 推荐的保存路径 (例如附件文件夹下)
+                    const filePath = await this.app.fileManager.getAvailablePathForAttachment(fileName);
+                    await this.app.vault.createBinary(filePath, arrayBuffer);
+
+                    // 2. 获取该文件的绝对路径 (Absolute Path)
+                    // PicGo 需要绝对路径才能读取
+                    let absolutePath;
+                    if (this.app.vault.adapter instanceof FileSystemAdapter) {
+                        const basePath = this.app.vault.adapter.getBasePath();
+                        absolutePath = path.join(basePath, filePath);
+                    } else {
+                        // 移动端或其他特殊情况不支持 PicGo Server
+                        new Notice("PicGo 上传仅支持桌面版");
+                        return;
+                    }
+
+                    // 3. 发送路径给 PicGo
+                    const response = await requestUrl({
+                        url: this.settings.picgoUrl,
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ list: [absolutePath] })
+                    });
+
+                    const resData = response.json;
+
+                    if (resData.success && resData.result && resData.result.length > 0) {
+                        const remoteUrl = resData.result[0];
+                        const finalStr = `![](${remoteUrl}){#fig:${timestamp}}`;
+                        
+                        // 4. 替换占位符
+                        const doc = editor.getValue();
+                        if (doc.includes(placeholder)) {
+                            editor.setValue(doc.replace(placeholder, finalStr));
+                            new Notice(`图片上传成功!`);
+                        } else {
+                            editor.replaceSelection(finalStr); // 兜底
+                        }
+
+                        // 5. 根据设置决定是否删除本地文件
+                        if (this.settings.deleteLocal) {
+                            const fileToDelete = this.app.vault.getAbstractFileByPath(filePath);
+                            if (fileToDelete) {
+                                await this.app.vault.delete(fileToDelete);
+                            }
+                        }
+                    } else {
+                        new Notice("PicGo 上传失败");
+                        editor.setValue(editor.getValue().replace(placeholder, ""));
+                    }
+                    
+                } catch (error) {
+                    console.error("Upload Error:", error);
+                    new Notice(`上传出错: ${error.message}`);
+                    editor.setValue(editor.getValue().replace(placeholder, ""));
+                }
+            }
+        }
     }
 };
