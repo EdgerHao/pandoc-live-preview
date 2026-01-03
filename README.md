@@ -94,6 +94,7 @@ To get the full academic writing preview experience, we highly recommend using t
 ## ✨ 核心功能
 
 - **实时渲染**：将 `@fig:xxx` 渲染为 **图1**，支持子图后缀（如 `图1a`）。
+- - ![](https://wanxinhao88.oss-cn-wuhan-lr.aliyuncs.com/img/20251231135057667.png)
 - **🔍 双向审计与管理 (New!)**：
     - **侧边栏视图**：提供了一个全新的管理面板（点击左侧 Ribbon 图标打开），列出文中所有图表。
     - **查错神器**：
@@ -109,7 +110,11 @@ To get the full academic writing preview experience, we highly recommend using t
     - **Pandoc 兼容**：自动在图片前后添加空行（`\n\n`），确保 Pandoc 导出无误。
     - **视觉紧凑**：在 Obsidian 预览时**强力隐藏**这些多余空行，保持笔记紧凑美观。
 - **⚡ 智能补全**：输入 **`@`** 弹出建议，支持插入 `( @fig:id )` 格式（带空格，符合规范）。
+- ![](https://wanxinhao88.oss-cn-wuhan-lr.aliyuncs.com/img/20251231190922619.png)
 - **⚡ 一键生成 ID**：快捷命令插入基于时间戳的唯一 ID。
+- - ![](https://wanxinhao88.oss-cn-wuhan-lr.aliyuncs.com/img/20251231191509696.png)
+- -  快捷键设置建议：![](https://wanxinhao88.oss-cn-wuhan-lr.aliyuncs.com/img/20251231195516689.png)
+
 
 ## 📥 安装方法
 
@@ -168,3 +173,4 @@ To get the full academic writing preview experience, we highly recommend using t
 
 ## 📄 License
 MIT License
+
