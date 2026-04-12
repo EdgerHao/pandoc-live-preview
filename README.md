@@ -120,7 +120,7 @@ To get the full academic writing preview experience, we highly recommend using t
 
 ### 方法 1：使用 BRAT 插件（推荐）
 1. 在 Obsidian 社区插件市场搜索并安装 **BRAT**。
-2. 添加本仓库地址：`https://github.com/wanxinhao/pandoc-live-preview`。
+2. 添加本仓库地址：`https://github.com/EdgerHao/pandoc-live-preview`。
 3. 点击添加，插件即可自动安装。
 
 ### 方法 2：手动安装
