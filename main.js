@@ -80,12 +80,15 @@ function scanDefinitions(text, settings) {
 }
 
 // === 3. 核心装饰器 ===
+let isSourceMode = false;
+
 const pandocRefField = StateField.define({
     create(state) {
+        if (isSourceMode) return Decoration.none;
         return Decoration.none;
     },
     update(oldDecorations, transaction) {
-        if (!transaction.docChanged && !transaction.selection) return oldDecorations;
+        if (isSourceMode) return Decoration.none;
 
         const state = transaction.state;
         const text = state.doc.toString();
@@ -259,6 +262,13 @@ module.exports = class PandocLivePreview extends Plugin {
         this.registerEditorSuggest(new PandocSuggest(this));
         this.addSettingTab(new PandocLivePreviewSettingTab(this.app, this));
         
+        this.registerEvent(this.app.workspace.on('layout-ready', () => {
+            this.updateSourceModeStatus();
+        }));
+        this.registerEvent(this.app.workspace.on('active-leaf-change', (leaf) => {
+            this.updateSourceModeStatus();
+        }));
+        
         this.addCommand({
             id: 'insert-fig-id-timestamp',
             name: '插入图片ID (Insert Figure ID)',
@@ -278,6 +288,16 @@ module.exports = class PandocLivePreview extends Plugin {
 
     async loadSettings() { this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData()); }
     async saveSettings() { await this.saveData(this.settings); }
+
+    updateSourceModeStatus() {
+        const activeLeaf = this.app.workspace.activeLeaf;
+        if (activeLeaf && activeLeaf.view) {
+            const mode = activeLeaf.view.getMode();
+            isSourceMode = (mode === 'source');
+        } else {
+            isSourceMode = false;
+        }
+    }
 
     // === PicGo 上传逻辑 (文件路径版) ===
     async handleImagePaste(evt, editor, view) {
