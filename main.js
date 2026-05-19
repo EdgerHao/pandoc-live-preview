@@ -10,7 +10,8 @@ const DEFAULT_SETTINGS = {
     autoUpload: true,
     deleteLocal: true,
     figPrefix: "图",
-    tblPrefix: "表"
+    tblPrefix: "表",
+    eqPrefix: "式"
 };
 
 // === 辅助函数：生成时间戳 ===
@@ -49,11 +50,13 @@ function scanDefinitions(text, settings) {
     const definitions = [];
     let figCount = 0;
     let tblCount = 0;
+    let eqCount = 0;
     
     const FIG_PRE = settings.figPrefix;
     const TBL_PRE = settings.tblPrefix;
+    const EQ_PRE = settings.eqPrefix;
 
-    const regex = /\{#(fig|tbl):([a-zA-Z0-9_\-]+)(?:\s+.*?)?\}/g;
+    const regex = /\{#(fig|tbl|eq):([a-zA-Z0-9_\-]+)(?:\s+.*?)?\}/g;
     let match;
 
     while ((match = regex.exec(text)) !== null) {
@@ -67,6 +70,9 @@ function scanDefinitions(text, settings) {
         } else if (type === 'tbl') {
             tblCount++;
             label = `${TBL_PRE}${tblCount}`;
+        } else if (type === 'eq') {
+            eqCount++;
+            label = `${EQ_PRE}${eqCount}`;
         }
 
         definitions.push({
@@ -95,13 +101,16 @@ const pandocRefField = StateField.define({
         const defs = scanDefinitions(text, currentSettings);
         const figMap = new Map();
         const tblMap = new Map();
+        const eqMap = new Map();
         
         const FIG_PRE = currentSettings.figPrefix;
         const TBL_PRE = currentSettings.tblPrefix;
+        const EQ_PRE = currentSettings.eqPrefix;
         
         defs.forEach(def => {
             if (def.type === 'fig') figMap.set(def.id, def.label.replace(FIG_PRE, ''));
             if (def.type === 'tbl') tblMap.set(def.id, def.label.replace(TBL_PRE, ''));
+            if (def.type === 'eq') eqMap.set(def.id, def.label.replace(EQ_PRE, ''));
         });
 
         function checkCursorOverlap(start, end) {
@@ -123,6 +132,9 @@ const pandocRefField = StateField.define({
             } else if (type === 'tbl') {
                 prefix = TBL_PRE;
                 if (tblMap.has(id)) number = tblMap.get(id);
+            } else if (type === 'eq') {
+                prefix = EQ_PRE;
+                if (eqMap.has(id)) number = eqMap.get(id);
             }
 
             const displayText = `${prefix}${number}`;
@@ -133,13 +145,13 @@ const pandocRefField = StateField.define({
             widgets.push(deco);
         }
 
-        const defRegex = /\{#(fig|tbl):([a-zA-Z0-9_\-]+)(?:\s+.*?)?\}/g;
+        const defRegex = /\{#(fig|tbl|eq):([a-zA-Z0-9_\-]+)(?:\s+.*?)?\}/g;
         let defMatch;
         while ((defMatch = defRegex.exec(text)) !== null) {
             addDecoration(defMatch.index, defMatch.index + defMatch[0].length, defMatch[1], defMatch[2], true);
         }
 
-        const refRegex = / ?@(fig|tbl):([a-zA-Z0-9_\-]+) ?/g;
+        const refRegex = / ?@(fig|tbl|eq):([a-zA-Z0-9_\-]+) ?/g;
         let refMatch;
         while ((refMatch = refRegex.exec(text)) !== null) {
             addDecoration(refMatch.index, refMatch.index + refMatch[0].length, refMatch[1], refMatch[2], false);
@@ -160,7 +172,7 @@ class PandocSuggest extends EditorSuggest {
     onTrigger(cursor, editor, file) {
         const line = editor.getLine(cursor.line);
         const sub = line.substring(0, cursor.ch);
-        const match = sub.match(/(@(fig|tbl)?:?([a-zA-Z0-9_\-]*))$/);
+        const match = sub.match(/(@(fig|tbl|eq)?:?([a-zA-Z0-9_\-]*))$/);
         if (match) {
             return {
                 start: { line: cursor.line, ch: match.index },
@@ -247,6 +259,9 @@ class PandocLivePreviewSettingTab extends PluginSettingTab {
         new Setting(containerEl).setName('表格前缀').addText(text => text.setValue(this.plugin.settings.tblPrefix).onChange(async (value) => {
             this.plugin.settings.tblPrefix = value; currentSettings.tblPrefix = value; await this.plugin.saveSettings(); this.plugin.app.workspace.updateOptions();
         }));
+        new Setting(containerEl).setName('公式前缀').addText(text => text.setValue(this.plugin.settings.eqPrefix).onChange(async (value) => {
+            this.plugin.settings.eqPrefix = value; currentSettings.eqPrefix = value; await this.plugin.saveSettings(); this.plugin.app.workspace.updateOptions();
+        }));
     }
 }
 
@@ -271,6 +286,13 @@ module.exports = class PandocLivePreview extends Plugin {
             name: '插入表格ID (Insert Table ID)',
             editorCallback: (editor) => {
                 editor.replaceSelection(`{#tbl:${getTimestamp()}}`);
+            }
+        });
+        this.addCommand({
+            id: 'insert-eq-id-timestamp',
+            name: '插入公式ID (Insert Equation ID)',
+            editorCallback: (editor) => {
+                editor.replaceSelection(`{#eq:${getTimestamp()}}`);
             }
         });
         this.registerEvent(this.app.workspace.on('editor-paste', this.handleImagePaste.bind(this)));
