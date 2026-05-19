@@ -45,6 +45,13 @@ class LabelWidget extends WidgetType {
 // === 2. 建立索引逻辑 ===
 let currentSettings = Object.assign({}, DEFAULT_SETTINGS);
 
+// 防抖计时器
+let debounceTimer = null;
+// 缓存上次扫描结果
+let cachedState = null;
+let cachedText = '';
+const DEBOUNCE_DELAY = 200; // 防抖延迟（毫秒）
+
 function scanDefinitions(text, settings) {
     const definitions = [];
     let figCount = 0;
@@ -85,13 +92,19 @@ const pandocRefField = StateField.define({
         return Decoration.none;
     },
     update(oldDecorations, transaction) {
-        if (!transaction.docChanged && !transaction.selection) return oldDecorations;
+        // 优化1: 只在文档内容变化时更新，选择变化不触发扫描
+        if (!transaction.docChanged) return oldDecorations;
 
         const state = transaction.state;
         const text = state.doc.toString();
-        const widgets = [];
         const selectionRanges = state.selection.ranges;
 
+        // 优化2: 检查文本是否与缓存相同，避免重复计算
+        if (text === cachedText && cachedState !== null) {
+            return cachedState;
+        }
+
+        const widgets = [];
         const defs = scanDefinitions(text, currentSettings);
         const figMap = new Map();
         const tblMap = new Map();
@@ -133,19 +146,26 @@ const pandocRefField = StateField.define({
             widgets.push(deco);
         }
 
-        const defRegex = /\{#(fig|tbl):([a-zA-Z0-9_\-]+)(?:\s+.*?)?\}/g;
-        let defMatch;
-        while ((defMatch = defRegex.exec(text)) !== null) {
-            addDecoration(defMatch.index, defMatch.index + defMatch[0].length, defMatch[1], defMatch[2], true);
+        // 优化3: 合并正则匹配，减少遍历次数
+        const combinedRegex = /(\{#(fig|tbl):([a-zA-Z0-9_\-]+)(?:\s+.*?)?\})|( ?@(fig|tbl):([a-zA-Z0-9_\-]+) ?)/g;
+        let match;
+        while ((match = combinedRegex.exec(text)) !== null) {
+            if (match[1]) {
+                // 定义匹配
+                addDecoration(match.index, match.index + match[1].length, match[2], match[3], true);
+            } else if (match[4]) {
+                // 引用匹配
+                addDecoration(match.index, match.index + match[4].length, match[5], match[6], false);
+            }
         }
 
-        const refRegex = / ?@(fig|tbl):([a-zA-Z0-9_\-]+) ?/g;
-        let refMatch;
-        while ((refMatch = refRegex.exec(text)) !== null) {
-            addDecoration(refMatch.index, refMatch.index + refMatch[0].length, refMatch[1], refMatch[2], false);
-        }
+        const newDecorations = Decoration.set(widgets.sort((a, b) => a.from - b.from));
+        
+        // 更新缓存
+        cachedText = text;
+        cachedState = newDecorations;
 
-        return Decoration.set(widgets.sort((a, b) => a.from - b.from));
+        return newDecorations;
     },
     provide: (field) => EditorView.decorations.from(field)
 });
@@ -155,6 +175,8 @@ class PandocSuggest extends EditorSuggest {
     constructor(plugin) {
         super(plugin.app);
         this.plugin = plugin;
+        this.cachedText = '';
+        this.cachedDefs = null;
     }
 
     onTrigger(cursor, editor, file) {
@@ -173,7 +195,17 @@ class PandocSuggest extends EditorSuggest {
 
     getSuggestions(context) {
         const text = context.editor.getValue();
-        const defs = scanDefinitions(text, this.plugin.settings);
+        let defs;
+        
+        // 优化：添加缓存，避免重复扫描
+        if (text === this.cachedText && this.cachedDefs !== null) {
+            defs = this.cachedDefs;
+        } else {
+            defs = scanDefinitions(text, this.plugin.settings);
+            this.cachedText = text;
+            this.cachedDefs = defs;
+        }
+        
         const query = context.query.toLowerCase();
 
         return defs.filter(def => {
