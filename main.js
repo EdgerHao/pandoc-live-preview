@@ -1,4 +1,4 @@
-/* main.js - Pandoc Live Preview Plugin (v1.5.0: Stable PicGo Upload) */
+/* main.js - Pandoc Live Preview Plugin (v1.6.0: Equation Cross-references) */
 const { Plugin, EditorSuggest, requestUrl, Notice, PluginSettingTab, Setting, FileSystemAdapter } = require('obsidian');
 const { StateField, EditorState } = require('@codemirror/state');
 const { Decoration, EditorView, WidgetType } = require('@codemirror/view');
