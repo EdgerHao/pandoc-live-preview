@@ -8,7 +8,8 @@ This is an Obsidian plugin that provides **real-time preview** for Pandoc citati
 
 ## ✨ Features
 
-- **Real-time Rendering**: Instantly turns `@fig:id` into readable labels like **图1** (Figure 1) or **表1** (Table 1) in Live Preview mode.
+- **Real-time Rendering**: Instantly turns `@fig:id`, `@tbl:id`, or `@eq:id` into readable labels like **图1** (Figure 1), **表1** (Table 1), or **式1** (Equation 1) in Live Preview mode.
+- **🧮 Equation Cross-references (New!)**: Define `$$ ... $$ {#eq:name}` and reference it as `@eq:name`, rendered as **式1** with a purple highlight.
 - **🔍 Bidirectional Audit & Management (New!)**:
     - **Sidebar View**: A dedicated panel to list all figures and tables. Click the Ribbon icon or use the command to open.
     - **Error Detection**:
@@ -62,6 +63,9 @@ Go to **Settings** -> **Pandoc Live Preview** to configure:
 * **Click to Jump**: Click a reference to scroll to the figure.
 * **Auto Parentheses**: Autocomplete inserts `( @fig:id )` with proper spacing.
 
+### 4. Prefixes
+* **Figure / Table / Equation Prefix**: Customize the number prefix of each type (defaults: `图` / `表` / `式`).
+
 > ⚠️ **Conflict Warning**: If you are using **Image Auto Upload Plugin**, please **DISABLE** it to prevent conflicts. This plugin handles the upload logic natively.
 
 ## 🚀 Usage
@@ -74,6 +78,11 @@ Go to **Settings** -> **Pandoc Live Preview** to configure:
 **2. Reference it:**
 Type **`@`** -> Select Figure -> Inserts `( @fig:id )` -> Renders as **(图1)**.
 > **Audit**: If you reference a non-existent ID, it will show as a **Red Warning** (`⛔ @fig:xxx`).
+
+**3. Equations:**
+* **Define**: `$$ E = mc^2 $$ {#eq:mass-energy}` -> Renders as **式1** (purple, dashed border).
+* **Reference**: `@eq:mass-energy` -> Renders as **式1** (purple, solid border).
+* **Command**: Run **"Insert Equation ID"** to insert a timestamped `{#eq:...}` tag.
 
 ## 🤝 Recommended
 
@@ -93,7 +102,8 @@ To get the full academic writing preview experience, we highly recommend using t
 
 ## ✨ 核心功能
 
-- **实时渲染**：将 `@fig:xxx` 渲染为 **图1**，支持子图后缀（如 `图1a`）。
+- **实时渲染**：将 `@fig:xxx`、`@tbl:xxx`、`@eq:xxx` 分别渲染为 **图1**、**表1**、**式1**，支持子图后缀（如 `图1a`）。
+- **🧮 公式交叉引用 (New!)**：支持 `$$ ... $$ {#eq:name}` 定义和 `@eq:name` 引用，预览中以紫色样式渲染为 **式1**。
 - - ![](https://wanxinhao88.oss-cn-wuhan-lr.aliyuncs.com/img/20251231135057667.png)
 - **🔍 双向审计与管理 (New!)**：
     - **侧边栏视图**：提供了一个全新的管理面板（点击左侧 Ribbon 图标打开），列出文中所有图表。
@@ -151,6 +161,9 @@ To get the full academic writing preview experience, we highly recommend using t
 1.  **启用单击跳转**：点击文中的 `(图1)` 可跳转到图片位置。
 2.  **引用自动加括号**：补全时自动生成 `( @fig:xxx )`。
 
+### 4. 前缀设置 (Prefixes)
+* **图片 / 表格 / 公式前缀**：自定义各类标签的编号前缀（默认：`图` / `表` / `式`）。
+
 > ⚠️ **冲突警告**：如果您正在使用 **Image Auto Upload Plugin**，请务必**关闭或禁用**它，否则会产生冲突。本插件已内置完整的上传逻辑。
 
 ## 🚀 使用方法
@@ -162,6 +175,11 @@ To get the full academic writing preview experience, we highly recommend using t
 
 **2. 引用图表**
 输入 **`@`** -> 选择图片 -> 自动插入 `( @fig:id )` -> 渲染为 **(图1)**（全蓝色/加粗）。
+
+**3. 公式**
+* **定义**：`$$ E = mc^2 $$ {#eq:mass-energy}` -> 渲染为 **式1**（紫色虚线边框）。
+* **引用**：`@eq:mass-energy` -> 渲染为 **式1**（紫色实线边框）。
+* **命令**：运行 **"插入公式ID (Insert Equation ID)"** 命令可快速插入带时间戳的 `{#eq:...}` 标签。
 
 ## 🤝 推荐搭配
 
