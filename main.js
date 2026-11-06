@@ -1,6 +1,6 @@
-/* main.js - Pandoc Live Preview Plugin (v1.6.0: Equation Cross-references) */
+/* main.js - Pandoc Live Preview Plugin (v1.6.1: Equation Cross-references) */
 const { Plugin, EditorSuggest, requestUrl, Notice, PluginSettingTab, Setting, FileSystemAdapter } = require('obsidian');
-const { StateField, EditorState } = require('@codemirror/state');
+const { StateField } = require('@codemirror/state');
 const { Decoration, EditorView, WidgetType } = require('@codemirror/view');
 const path = require('path'); // 引入 path 模块处理路径
 
@@ -41,128 +41,148 @@ class LabelWidget extends WidgetType {
         span.className = `pandoc-widget pandoc-${this.type} pandoc-${this.isDef ? 'def' : 'ref'}`;
         return span;
     }
+
+    eq(other) {
+        return other.text === this.text && other.type === this.type && other.isDef === this.isDef;
+    }
 }
 
 // === 2. 建立索引逻辑 ===
 let currentSettings = Object.assign({}, DEFAULT_SETTINGS);
+// 设置（前缀）变更时递增：已打开的编辑器在下一个事务里检测到 epoch 不一致即重新扫描
+let settingsEpoch = 0;
+// 按 Doc 缓存扫描结果：Doc 不可变（编辑即生成新 Doc，自然失效），
+// 编辑器关闭后缓存随 Doc 一起被 GC 回收，无需手动清理
+const scanCache = new WeakMap();
 
-function scanDefinitions(text, settings) {
-    const definitions = [];
+// 标签正则（定义 + 引用合一，全插件共用一份）：
+// - 定义：{#fig:xxx 标题} / {#tbl:xxx 标题} / {#eq:xxx 标题}
+//   标题部分用「前瞻捕获 + 反向引用」模拟原子组：(?:\s+[^\n{}]*) 只尝试一次、不回溯，
+//   修复旧写法 (?:\s+.*?)? 在「未闭合 id + 长空白行」上的二次方回溯
+// - 引用：@fig:xxx / @tbl:xxx / @eq:xxx（前后紧邻的空格一并纳入替换范围，保持旧行为）
+const LABEL_REGEX = /\{#(?<dType>fig|tbl|eq):(?<dId>[a-zA-Z0-9_\-]+)(?=(?<cap>(?:\s+[^\n{}]*)?))\k<cap>\}|(?<ref> ?@(?<rType>fig|tbl|eq):(?<rId>[a-zA-Z0-9_\-]+) ?)/g;
+
+// 各类型标签的显示前缀
+function prefixOf(type) {
+    if (type === 'fig') return currentSettings.figPrefix;
+    if (type === 'tbl') return currentSettings.tblPrefix;
+    return currentSettings.eqPrefix;
+}
+
+// 单次遍历同时产出：
+// - defs:  定义列表（供自动补全使用，结构与旧版一致）
+// - labels: 所有标签的位置与编号（供装饰器使用）
+function scanLabels(text) {
+    const defs = [];
+    const hits = [];
     let figCount = 0;
     let tblCount = 0;
     let eqCount = 0;
-    
-    const FIG_PRE = settings.figPrefix;
-    const TBL_PRE = settings.tblPrefix;
-    const EQ_PRE = settings.eqPrefix;
 
-    const regex = /\{#(fig|tbl|eq):([a-zA-Z0-9_\-]+)(?:\s+.*?)?\}/g;
+    LABEL_REGEX.lastIndex = 0;
     let match;
-
-    while ((match = regex.exec(text)) !== null) {
-        const type = match[1];
-        const id = match[2];
-        let label = "";
-
-        if (type === 'fig') {
-            figCount++;
-            label = `${FIG_PRE}${figCount}`;
-        } else if (type === 'tbl') {
-            tblCount++;
-            label = `${TBL_PRE}${tblCount}`;
-        } else if (type === 'eq') {
-            eqCount++;
-            label = `${EQ_PRE}${eqCount}`;
+    while ((match = LABEL_REGEX.exec(text)) !== null) {
+        const g = match.groups;
+        const isDef = g.dId !== undefined;
+        if (isDef) {
+            const number = g.dType === 'fig' ? ++figCount : g.dType === 'tbl' ? ++tblCount : ++eqCount;
+            defs.push({
+                id: g.dId,
+                type: g.dType,
+                label: `${prefixOf(g.dType)}${number}`,
+                fullId: `${g.dType}:${g.dId}`
+            });
         }
-
-        definitions.push({
-            id: id,
-            type: type,
-            label: label,
-            fullId: `${type}:${id}`
+        hits.push({
+            from: match.index,
+            to: match.index + match[0].length,
+            type: isDef ? g.dType : g.rType,
+            id: isDef ? g.dId : g.rId,
+            isDef: isDef
         });
     }
-    return definitions;
+
+    // 编号解析（与旧实现一致）：同一 id 的多个定义取最后一个的编号；未定义的引用显示 "?"
+    const numbers = new Map();
+    for (const def of defs) {
+        numbers.set(def.fullId, def.label.slice(prefixOf(def.type).length));
+    }
+
+    const labels = hits.map(hit => ({
+        ...hit,
+        number: numbers.has(`${hit.type}:${hit.id}`) ? numbers.get(`${hit.type}:${hit.id}`) : "?"
+    }));
+
+    return { defs, labels };
+}
+
+// 按 Doc 复用扫描结果：编辑生成新 Doc 自动 miss；重复触发、多窗格共享同一 Doc 时命中
+function getScan(doc) {
+    const cached = scanCache.get(doc);
+    if (cached && cached.epoch === settingsEpoch) return cached;
+    const result = scanLabels(doc.toString());
+    result.epoch = settingsEpoch;
+    scanCache.set(doc, result);
+    return result;
 }
 
 // === 3. 核心装饰器 ===
-let isSourceMode = false;
+let isSourceMode = false; // 源码模式下不渲染 widget
+
+// 缓存状态（标签列表 + 渲染结果）存放在 StateField 自身的值里：
+// 每个编辑器独立一份，互不串用；编辑器关闭后随状态一起回收
+function buildDecorations(labels, selectionRanges) {
+    const widgets = [];
+    for (const lb of labels) {
+        let suppressed = false;
+        for (const range of selectionRanges) {
+            if (range.from <= lb.to && range.to >= lb.from) { suppressed = true; break; }
+        }
+        if (suppressed) continue; // 光标位于标签上：显示原始源码
+
+        widgets.push(Decoration.replace({
+            widget: new LabelWidget(`${prefixOf(lb.type)}${lb.number}`, lb.type, lb.isDef),
+            inclusive: false
+        }).range(lb.from, lb.to));
+    }
+    // labels 按文档顺序生成，天然有序
+    return Decoration.set(widgets, true);
+}
 
 const pandocRefField = StateField.define({
     create(state) {
-        if (isSourceMode) return Decoration.none;
-        return Decoration.none;
+        // 打开文档时立即渲染（源码模式下暂不显示，索引仍建立，切回实时预览即可恢复）
+        const { labels } = getScan(state.doc);
+        return {
+            epoch: settingsEpoch,
+            sourceMode: isSourceMode,
+            labels,
+            decorations: isSourceMode ? Decoration.none : buildDecorations(labels, state.selection.ranges)
+        };
     },
-    update(oldDecorations, transaction) {
-        if (isSourceMode) return Decoration.none;
-
-        const state = transaction.state;
-        const text = state.doc.toString();
-        const widgets = [];
-        const selectionRanges = state.selection.ranges;
-
-        const defs = scanDefinitions(text, currentSettings);
-        const figMap = new Map();
-        const tblMap = new Map();
-        const eqMap = new Map();
-        
-        const FIG_PRE = currentSettings.figPrefix;
-        const TBL_PRE = currentSettings.tblPrefix;
-        const EQ_PRE = currentSettings.eqPrefix;
-        
-        defs.forEach(def => {
-            if (def.type === 'fig') figMap.set(def.id, def.label.replace(FIG_PRE, ''));
-            if (def.type === 'tbl') tblMap.set(def.id, def.label.replace(TBL_PRE, ''));
-            if (def.type === 'eq') eqMap.set(def.id, def.label.replace(EQ_PRE, ''));
-        });
-
-        function checkCursorOverlap(start, end) {
-            for (const range of selectionRanges) {
-                if (range.from <= end && range.to >= start) return true;
-            }
-            return false;
+    update(value, transaction) {
+        // 文档变化，或设置（前缀）刚被修改（epoch 不一致）→ 重新扫描
+        if (transaction.docChanged || value.epoch !== settingsEpoch) {
+            const { labels } = getScan(transaction.state.doc);
+            return {
+                epoch: settingsEpoch,
+                sourceMode: isSourceMode,
+                labels,
+                decorations: isSourceMode ? Decoration.none : buildDecorations(labels, transaction.state.selection.ranges)
+            };
         }
-
-        function addDecoration(start, end, type, id, isDef) {
-            if (checkCursorOverlap(start, end)) return;
-
-            let number = "?";
-            let prefix = "";
-
-            if (type === 'fig') {
-                prefix = FIG_PRE;
-                if (figMap.has(id)) number = figMap.get(id);
-            } else if (type === 'tbl') {
-                prefix = TBL_PRE;
-                if (tblMap.has(id)) number = tblMap.get(id);
-            } else if (type === 'eq') {
-                prefix = EQ_PRE;
-                if (eqMap.has(id)) number = eqMap.get(id);
-            }
-
-            const displayText = `${prefix}${number}`;
-            const deco = Decoration.replace({
-                widget: new LabelWidget(displayText, type, isDef),
-                inclusive: false
-            }).range(start, end);
-            widgets.push(deco);
+        // 模式切换、纯光标/选择变化：不重扫全文，用已有标签廉价重建（处理移入/移出标签的显隐切换）
+        if (value.sourceMode !== isSourceMode || transaction.selection) {
+            return {
+                epoch: value.epoch,
+                sourceMode: isSourceMode,
+                labels: value.labels,
+                decorations: isSourceMode ? Decoration.none : buildDecorations(value.labels, transaction.state.selection.ranges)
+            };
         }
-
-        const defRegex = /\{#(fig|tbl|eq):([a-zA-Z0-9_\-]+)(?:\s+.*?)?\}/g;
-        let defMatch;
-        while ((defMatch = defRegex.exec(text)) !== null) {
-            addDecoration(defMatch.index, defMatch.index + defMatch[0].length, defMatch[1], defMatch[2], true);
-        }
-
-        const refRegex = / ?@(fig|tbl|eq):([a-zA-Z0-9_\-]+) ?/g;
-        let refMatch;
-        while ((refMatch = refRegex.exec(text)) !== null) {
-            addDecoration(refMatch.index, refMatch.index + refMatch[0].length, refMatch[1], refMatch[2], false);
-        }
-
-        return Decoration.set(widgets.sort((a, b) => a.from - b.from));
+        return value;
     },
-    provide: (field) => EditorView.decorations.from(field)
+    provide: (field) => EditorView.decorations.from(field, (v) => v.decorations)
 });
 
 // === 4. 自动补全建议类 ===
@@ -187,8 +207,15 @@ class PandocSuggest extends EditorSuggest {
     }
 
     getSuggestions(context) {
-        const text = context.editor.getValue();
-        const defs = scanDefinitions(text, this.plugin.settings);
+        const editor = context.editor;
+        let defs;
+        // 复用按 Doc 的共享扫描缓存（与装饰器共用），避免对同一文档重复全文扫描
+        if (editor.cm && editor.cm.state && editor.cm.state.doc) {
+            defs = getScan(editor.cm.state.doc).defs;
+        } else {
+            defs = scanLabels(editor.getValue()).defs;
+        }
+
         const query = context.query.toLowerCase();
 
         return defs.filter(def => {
@@ -257,13 +284,13 @@ class PandocLivePreviewSettingTab extends PluginSettingTab {
 
         containerEl.createEl('h3', { text: '前缀显示设置' });
         new Setting(containerEl).setName('图片前缀').addText(text => text.setValue(this.plugin.settings.figPrefix).onChange(async (value) => {
-            this.plugin.settings.figPrefix = value; currentSettings.figPrefix = value; await this.plugin.saveSettings(); this.plugin.app.workspace.updateOptions(); 
+            this.plugin.settings.figPrefix = value; await this.plugin.saveSettings(); this.plugin.refreshEditors();
         }));
         new Setting(containerEl).setName('表格前缀').addText(text => text.setValue(this.plugin.settings.tblPrefix).onChange(async (value) => {
-            this.plugin.settings.tblPrefix = value; currentSettings.tblPrefix = value; await this.plugin.saveSettings(); this.plugin.app.workspace.updateOptions();
+            this.plugin.settings.tblPrefix = value; await this.plugin.saveSettings(); this.plugin.refreshEditors();
         }));
         new Setting(containerEl).setName('公式前缀').addText(text => text.setValue(this.plugin.settings.eqPrefix).onChange(async (value) => {
-            this.plugin.settings.eqPrefix = value; currentSettings.eqPrefix = value; await this.plugin.saveSettings(); this.plugin.app.workspace.updateOptions();
+            this.plugin.settings.eqPrefix = value; await this.plugin.saveSettings(); this.plugin.refreshEditors();
         }));
     }
 }
@@ -311,13 +338,29 @@ module.exports = class PandocLivePreview extends Plugin {
     async loadSettings() { this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData()); }
     async saveSettings() { await this.saveData(this.settings); }
 
+    // 把空事务派发给所有已打开的编辑器，触发装饰字段立即重算；
+    // 若运行环境不支持 iterateCodeMirrors，则等下一次任意事务再生效
+    dispatchToAllEditors() {
+        if (typeof this.app.workspace.iterateCodeMirrors === 'function') {
+            this.app.workspace.iterateCodeMirrors((cm) => {
+                if (cm && typeof cm.dispatch === 'function') cm.dispatch({});
+            });
+        }
+    }
+
+    // 设置（前缀）变更后：递增 epoch，并让所有编辑器立即重扫
+    refreshEditors() {
+        settingsEpoch++;
+        this.dispatchToAllEditors();
+    }
+
     updateSourceModeStatus() {
         const activeLeaf = this.app.workspace.activeLeaf;
-        if (activeLeaf && activeLeaf.view) {
-            const mode = activeLeaf.view.getMode();
-            isSourceMode = (mode === 'source');
-        } else {
-            isSourceMode = false;
+        const mode = activeLeaf && activeLeaf.view ? activeLeaf.view.getMode() : null;
+        const next = (mode === 'source');
+        if (next !== isSourceMode) {
+            isSourceMode = next;
+            this.dispatchToAllEditors(); // 模式切换立即生效，不再等待下一次编辑
         }
     }
 
