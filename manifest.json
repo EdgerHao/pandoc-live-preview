@@ -1,7 +1,7 @@
 {
 	"id": "pandoc-live-preview",
 	"name": "Pandoc Live Preview",
-	"version": "1.6.0",
+	"version": "1.6.1",
 	"minAppVersion": "0.15.0",
 	"description": "Real-time preview for Pandoc cross-references (@fig/@tbl/@eq) and auto-upload images to PicGo.",
 	"author": "你的名字",

@@ -1,4 +1,4 @@
-/* main.js - Pandoc Live Preview Plugin (v1.6.0: Equation Cross-references) */
+/* main.js - Pandoc Live Preview Plugin (v1.6.1: Equation Cross-references) */
 const { Plugin, EditorSuggest, requestUrl, Notice, PluginSettingTab, Setting, FileSystemAdapter } = require('obsidian');
 const { StateField } = require('@codemirror/state');
 const { Decoration, EditorView, WidgetType } = require('@codemirror/view');
