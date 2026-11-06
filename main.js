@@ -1,4 +1,4 @@
-/* main.js - Pandoc Live Preview Plugin (v1.5.0: Stable PicGo Upload) */
+/* main.js - Pandoc Live Preview Plugin (v1.6.0: Equation Cross-references) */
 const { Plugin, EditorSuggest, requestUrl, Notice, PluginSettingTab, Setting, FileSystemAdapter } = require('obsidian');
 const { StateField } = require('@codemirror/state');
 const { Decoration, EditorView, WidgetType } = require('@codemirror/view');
@@ -10,7 +10,8 @@ const DEFAULT_SETTINGS = {
     autoUpload: true,
     deleteLocal: true,
     figPrefix: "图",
-    tblPrefix: "表"
+    tblPrefix: "表",
+    eqPrefix: "式"
 };
 
 // === 辅助函数：生成时间戳 ===
@@ -55,11 +56,18 @@ let settingsEpoch = 0;
 const scanCache = new WeakMap();
 
 // 标签正则（定义 + 引用合一，全插件共用一份）：
-// - 定义：{#fig:xxx 标题} / {#tbl:xxx 标题}
+// - 定义：{#fig:xxx 标题} / {#tbl:xxx 标题} / {#eq:xxx 标题}
 //   标题部分用「前瞻捕获 + 反向引用」模拟原子组：(?:\s+[^\n{}]*) 只尝试一次、不回溯，
 //   修复旧写法 (?:\s+.*?)? 在「未闭合 id + 长空白行」上的二次方回溯
-// - 引用：@fig:xxx / @tbl:xxx（前后紧邻的空格一并纳入替换范围，保持旧行为）
-const LABEL_REGEX = /\{#(?<dType>fig|tbl):(?<dId>[a-zA-Z0-9_\-]+)(?=(?<cap>(?:\s+[^\n{}]*)?))\k<cap>\}|(?<ref> ?@(?<rType>fig|tbl):(?<rId>[a-zA-Z0-9_\-]+) ?)/g;
+// - 引用：@fig:xxx / @tbl:xxx / @eq:xxx（前后紧邻的空格一并纳入替换范围，保持旧行为）
+const LABEL_REGEX = /\{#(?<dType>fig|tbl|eq):(?<dId>[a-zA-Z0-9_\-]+)(?=(?<cap>(?:\s+[^\n{}]*)?))\k<cap>\}|(?<ref> ?@(?<rType>fig|tbl|eq):(?<rId>[a-zA-Z0-9_\-]+) ?)/g;
+
+// 各类型标签的显示前缀
+function prefixOf(type) {
+    if (type === 'fig') return currentSettings.figPrefix;
+    if (type === 'tbl') return currentSettings.tblPrefix;
+    return currentSettings.eqPrefix;
+}
 
 // 单次遍历同时产出：
 // - defs:  定义列表（供自动补全使用，结构与旧版一致）
@@ -69,6 +77,7 @@ function scanLabels(text) {
     const hits = [];
     let figCount = 0;
     let tblCount = 0;
+    let eqCount = 0;
 
     LABEL_REGEX.lastIndex = 0;
     let match;
@@ -76,12 +85,11 @@ function scanLabels(text) {
         const g = match.groups;
         const isDef = g.dId !== undefined;
         if (isDef) {
-            const prefix = g.dType === 'fig' ? currentSettings.figPrefix : currentSettings.tblPrefix;
-            const number = g.dType === 'fig' ? ++figCount : ++tblCount;
+            const number = g.dType === 'fig' ? ++figCount : g.dType === 'tbl' ? ++tblCount : ++eqCount;
             defs.push({
                 id: g.dId,
                 type: g.dType,
-                label: `${prefix}${number}`,
+                label: `${prefixOf(g.dType)}${number}`,
                 fullId: `${g.dType}:${g.dId}`
             });
         }
@@ -97,8 +105,7 @@ function scanLabels(text) {
     // 编号解析（与旧实现一致）：同一 id 的多个定义取最后一个的编号；未定义的引用显示 "?"
     const numbers = new Map();
     for (const def of defs) {
-        const prefix = def.type === 'fig' ? currentSettings.figPrefix : currentSettings.tblPrefix;
-        numbers.set(def.fullId, def.label.slice(prefix.length));
+        numbers.set(def.fullId, def.label.slice(prefixOf(def.type).length));
     }
 
     const labels = hits.map(hit => ({
@@ -120,6 +127,8 @@ function getScan(doc) {
 }
 
 // === 3. 核心装饰器 ===
+let isSourceMode = false; // 源码模式下不渲染 widget
+
 // 缓存状态（标签列表 + 渲染结果）存放在 StateField 自身的值里：
 // 每个编辑器独立一份，互不串用；编辑器关闭后随状态一起回收
 function buildDecorations(labels, selectionRanges) {
@@ -131,9 +140,8 @@ function buildDecorations(labels, selectionRanges) {
         }
         if (suppressed) continue; // 光标位于标签上：显示原始源码
 
-        const prefix = lb.type === 'fig' ? currentSettings.figPrefix : currentSettings.tblPrefix;
         widgets.push(Decoration.replace({
-            widget: new LabelWidget(`${prefix}${lb.number}`, lb.type, lb.isDef),
+            widget: new LabelWidget(`${prefixOf(lb.type)}${lb.number}`, lb.type, lb.isDef),
             inclusive: false
         }).range(lb.from, lb.to));
     }
@@ -143,19 +151,34 @@ function buildDecorations(labels, selectionRanges) {
 
 const pandocRefField = StateField.define({
     create(state) {
-        // 打开文档时立即渲染，而不是等到第一次编辑
+        // 打开文档时立即渲染（源码模式下暂不显示，索引仍建立，切回实时预览即可恢复）
         const { labels } = getScan(state.doc);
-        return { epoch: settingsEpoch, labels, decorations: buildDecorations(labels, state.selection.ranges) };
+        return {
+            epoch: settingsEpoch,
+            sourceMode: isSourceMode,
+            labels,
+            decorations: isSourceMode ? Decoration.none : buildDecorations(labels, state.selection.ranges)
+        };
     },
     update(value, transaction) {
         // 文档变化，或设置（前缀）刚被修改（epoch 不一致）→ 重新扫描
         if (transaction.docChanged || value.epoch !== settingsEpoch) {
             const { labels } = getScan(transaction.state.doc);
-            return { epoch: settingsEpoch, labels, decorations: buildDecorations(labels, transaction.state.selection.ranges) };
+            return {
+                epoch: settingsEpoch,
+                sourceMode: isSourceMode,
+                labels,
+                decorations: isSourceMode ? Decoration.none : buildDecorations(labels, transaction.state.selection.ranges)
+            };
         }
-        // 纯光标/选择变化：不重扫全文，用已有标签廉价重建（处理光标移入/移出标签的显隐切换）
-        if (transaction.selection) {
-            return { epoch: value.epoch, labels: value.labels, decorations: buildDecorations(value.labels, transaction.state.selection.ranges) };
+        // 模式切换、纯光标/选择变化：不重扫全文，用已有标签廉价重建（处理移入/移出标签的显隐切换）
+        if (value.sourceMode !== isSourceMode || transaction.selection) {
+            return {
+                epoch: value.epoch,
+                sourceMode: isSourceMode,
+                labels: value.labels,
+                decorations: isSourceMode ? Decoration.none : buildDecorations(value.labels, transaction.state.selection.ranges)
+            };
         }
         return value;
     },
@@ -172,7 +195,7 @@ class PandocSuggest extends EditorSuggest {
     onTrigger(cursor, editor, file) {
         const line = editor.getLine(cursor.line);
         const sub = line.substring(0, cursor.ch);
-        const match = sub.match(/(@(fig|tbl)?:?([a-zA-Z0-9_\-]*))$/);
+        const match = sub.match(/(@(fig|tbl|eq)?:?([a-zA-Z0-9_\-]*))$/);
         if (match) {
             return {
                 start: { line: cursor.line, ch: match.index },
@@ -266,6 +289,9 @@ class PandocLivePreviewSettingTab extends PluginSettingTab {
         new Setting(containerEl).setName('表格前缀').addText(text => text.setValue(this.plugin.settings.tblPrefix).onChange(async (value) => {
             this.plugin.settings.tblPrefix = value; await this.plugin.saveSettings(); this.plugin.refreshEditors();
         }));
+        new Setting(containerEl).setName('公式前缀').addText(text => text.setValue(this.plugin.settings.eqPrefix).onChange(async (value) => {
+            this.plugin.settings.eqPrefix = value; await this.plugin.saveSettings(); this.plugin.refreshEditors();
+        }));
     }
 }
 
@@ -277,6 +303,13 @@ module.exports = class PandocLivePreview extends Plugin {
         this.registerEditorExtension(pandocRefField);
         this.registerEditorSuggest(new PandocSuggest(this));
         this.addSettingTab(new PandocLivePreviewSettingTab(this.app, this));
+        
+        this.registerEvent(this.app.workspace.on('layout-ready', () => {
+            this.updateSourceModeStatus();
+        }));
+        this.registerEvent(this.app.workspace.on('active-leaf-change', (leaf) => {
+            this.updateSourceModeStatus();
+        }));
         
         this.addCommand({
             id: 'insert-fig-id-timestamp',
@@ -292,20 +325,42 @@ module.exports = class PandocLivePreview extends Plugin {
                 editor.replaceSelection(`{#tbl:${getTimestamp()}}`);
             }
         });
+        this.addCommand({
+            id: 'insert-eq-id-timestamp',
+            name: '插入公式ID (Insert Equation ID)',
+            editorCallback: (editor) => {
+                editor.replaceSelection(`{#eq:${getTimestamp()}}`);
+            }
+        });
         this.registerEvent(this.app.workspace.on('editor-paste', this.handleImagePaste.bind(this)));
     }
 
     async loadSettings() { this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData()); }
     async saveSettings() { await this.saveData(this.settings); }
 
-    // 设置（前缀）变更后：递增 epoch，并让所有已打开的编辑器通过空事务立即重扫；
-    // 若运行环境不支持 iterateCodeMirrors，epoch 已递增，下一次任意事务也会触发重扫
-    refreshEditors() {
-        settingsEpoch++;
+    // 把空事务派发给所有已打开的编辑器，触发装饰字段立即重算；
+    // 若运行环境不支持 iterateCodeMirrors，则等下一次任意事务再生效
+    dispatchToAllEditors() {
         if (typeof this.app.workspace.iterateCodeMirrors === 'function') {
             this.app.workspace.iterateCodeMirrors((cm) => {
                 if (cm && typeof cm.dispatch === 'function') cm.dispatch({});
             });
+        }
+    }
+
+    // 设置（前缀）变更后：递增 epoch，并让所有编辑器立即重扫
+    refreshEditors() {
+        settingsEpoch++;
+        this.dispatchToAllEditors();
+    }
+
+    updateSourceModeStatus() {
+        const activeLeaf = this.app.workspace.activeLeaf;
+        const mode = activeLeaf && activeLeaf.view ? activeLeaf.view.getMode() : null;
+        const next = (mode === 'source');
+        if (next !== isSourceMode) {
+            isSourceMode = next;
+            this.dispatchToAllEditors(); // 模式切换立即生效，不再等待下一次编辑
         }
     }
 

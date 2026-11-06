@@ -48,6 +48,23 @@
     border: 1px solid rgba(255, 152, 0, 0.3);
 }
 
+/* === 3.5 公式 (Equation) 的配色方案：紫色系 (与蓝色和橙色形成对比) === */
+
+/* 公式【定义处】：{#eq:xxx} -> (式1) */
+.pandoc-eq.pandoc-def {
+    color: #6a1b9a;                 /* 深紫色文字 */
+    background-color: #f3e5f5;      /* 极浅紫背景 */
+    border: 1px dashed #7b1fa2;     /* 紫色虚线边框 */
+    font-weight: bold;
+}
+
+/* 公式【引用处】：@eq:xxx -> (式1) */
+.pandoc-eq.pandoc-ref {
+    color: #9c27b0;                 /* 标准紫文字 */
+    background-color: rgba(156, 39, 176, 0.1); /* 浅紫透明背景 */
+    border: 1px solid rgba(156, 39, 176, 0.3); /* 浅紫实线边框 */
+}
+
 /* === 4. 鼠标悬停通用效果 === */
 .pandoc-widget:hover {
     opacity: 0.8;
