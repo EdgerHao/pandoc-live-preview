@@ -183,7 +183,7 @@ To get the full academic writing preview experience, we highly recommend using t
 
 **4. 英文题注（学位论文模板）**
 
-`custom-style` 题注 div（如 `Figure Caption EN` / `Table Caption EN`）内含 `[-@fig:id]` 的行，会以**与中文题注完全相同的样式**整行渲染（颜色、加粗、居中、间距均跟随插件设置），显示在中文题注下方一行：
+`custom-style` 题注 div（如 `Figure Caption EN` / `Table Caption EN`）内含 `[-@fig:id]` 的行，会以**与中文题注完全相同的样式**整行渲染（颜色、加粗、居中、间距均跟随插件设置），紧跟中文题注显示；该 div 的 `:::` 围栏行（连同开栏上方的一个空行）同时隐藏，预览更清爽。光标移入隐藏区域会自动恢复原文显示，不影响编辑。无 `[-@id]` 的 div 与非题注 div 不受任何影响：
 
 ```markdown
 ![不同润湿性岩石表面油水的分布特征](img.png){#fig:1-2}

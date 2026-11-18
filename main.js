@@ -305,11 +305,17 @@ function buildDecorationSpecs(text) {
     }
 
     // 学位论文英文题注：custom-style 题注 div 内含 [-@fig:id] 的行，
-    // 整行替换为与中文题注（定义处）完全同样式的 LabelWidget（同颜色/加粗/居中/间距，跟随设置）
+    // 整行替换为与中文题注（定义处）完全同样式的 LabelWidget（同颜色/加粗/居中/间距，跟随设置）；
+    // 题注行渲染成功后，该 div 的围栏行（::: {custom-style=...} 与 :::）一并隐藏，
+    // 开栏行连同其上方紧邻的一个空行（让英文题注紧跟中文题注），显示更清爽。
+    // 光标移入隐藏区域时装饰被抑制、恢复原文显示，不影响编辑。
     const captionLineRanges = [];
     let linePos = 0;
     const openDivs = [];
-    for (const line of text.split('\n')) {
+    let lastBlankStart = -1; // 上一行为空行时的行首位置
+    const lines = text.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
         const lineStart = linePos;
         const lineEnd = lineStart + line.length;
         linePos = lineEnd + 1;
@@ -318,13 +324,21 @@ function buildDecorationSpecs(text) {
         if (fenceM) {
             if (fenceM[2]) {
                 const csM = fenceM[2].match(/custom-style[ \t]*=[ \t]*"([^"]+)"/);
-                openDivs.push(csM ? /caption|题注/i.test(csM[1]) : false);
+                const isCaption = csM ? /caption|题注/i.test(csM[1]) : false;
+                const hideStart = (isCaption && lastBlankStart >= 0) ? lastBlankStart : lineStart;
+                openDivs.push({ isCaption, openHideRange: isCaption ? [hideStart, lineEnd + 1] : null, transformed: false });
             } else if (openDivs.length > 0) {
-                openDivs.pop();
+                const div = openDivs.pop();
+                if (div.transformed) {
+                    // 题注行已渲染：隐藏开栏行（含上方空行）与闭栏行
+                    specs.push(Decoration.replace({ inclusive: false }).range(div.openHideRange[0], div.openHideRange[1]));
+                    specs.push(Decoration.replace({ inclusive: false }).range(lineStart, lineEnd + 1));
+                }
             }
+            lastBlankStart = -1;
             continue;
         }
-        if (openDivs.length > 0 && openDivs[openDivs.length - 1]) {
+        if (openDivs.length > 0 && openDivs[openDivs.length - 1].isCaption) {
             const capM = line.match(CAPTION_LINE_REGEX);
             if (capM) {
                 const type = capM[3];
@@ -337,8 +351,10 @@ function buildDecorationSpecs(text) {
                     widget: new LabelWidget(widgetText, type, true, capM[5], "", false, null, currentSettings, "normal"),
                     inclusive: false
                 }).range(lineStart + capM[1].length, lineEnd));
+                openDivs[openDivs.length - 1].transformed = true;
             }
         }
+        lastBlankStart = (line.trim() === '') ? lineStart : -1;
     }
     const inCaptionLine = (pos) => {
         for (const [s, e] of captionLineRanges) if (pos >= s && pos < e) return true;
