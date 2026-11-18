@@ -1,4 +1,4 @@
-/* main.js - Pandoc Live Preview Plugin (v3.7.0: 3.6.0 + custom-style 双语题注渲染 + [-@fig:id] 抑制前缀引用) */
+/* main.js - Pandoc Live Preview Plugin (v3.6.0: 3.5.0 功能基线 + @eq 公式引用 + 源码模式检测 + 大文件性能优化) */
 const { Plugin, EditorSuggest, requestUrl, Notice, PluginSettingTab, Setting, FileSystemAdapter, ItemView, MarkdownView } = require('obsidian');
 const { StateField } = require('@codemirror/state');
 const { Decoration, EditorView, WidgetType } = require('@codemirror/view');
@@ -38,7 +38,7 @@ function getTimestamp() {
 
 // === 1. 标签组件 (LabelWidget) ===
 class LabelWidget extends WidgetType {
-    constructor(text, type, isDef, caption = "", suffix = "", hasParen = false, targetPos = null, settings = null, status = "normal", plain = false) {
+    constructor(text, type, isDef, caption = "", suffix = "", hasParen = false, targetPos = null, settings = null, status = "normal") {
         super();
         this.text = text;
         this.type = type;
@@ -49,7 +49,6 @@ class LabelWidget extends WidgetType {
         this.targetPos = targetPos;
         this.settings = settings;
         this.status = status;
-        this.plain = plain; // [-@fig:id] 抑制前缀形态：纯编号，无底色
     }
 
     toDOM(view) {
@@ -69,7 +68,6 @@ class LabelWidget extends WidgetType {
 
         span.innerText = content;
         span.className = `pandoc-widget pandoc-${this.type} pandoc-${this.isDef ? 'def' : 'ref'}`;
-        if (this.plain) span.classList.add('pandoc-plain');
 
         if (this.isDef && this.status === "unused") {
             span.classList.add('pandoc-unused');
@@ -125,13 +123,8 @@ const scanCache = new WeakMap();
 // 标签定义正则（fig/tbl/eq，标题部分用「前瞻捕获 + 反向引用」模拟原子组，
 // 修复旧写法 (?:\s+.*?)? 在「未闭合 id + 长空行」上的二次方回溯）
 const DEF_REGEX = /\{#(?<dType>fig|tbl|eq):(?<dId>[a-zA-Z0-9_\-]+)(?=(?<dCap>(?:\s+[^\n{}]*)?))\k<dCap>\}/g;
-// 引用正则（fig/tbl/eq，全命名组），两种形态：
-// 1) [-@fig:id]：抑制前缀的编号引用（学位论文双语题注常用），整体替换为纯编号 N
-// 2) ( @fig:id ) / @fig:id：普通引用，支持前括号+空格、子图后缀字母（图1a）、尾括号
-const REF_REGEX = /\[[-][ \t]*@(?<sType>fig|tbl|eq):(?<sId>[a-zA-Z0-9_\-]+)[ \t]*\]|(?<lead>\(?[ \t]*)@(?<rType>fig|tbl|eq):(?<rId>[a-zA-Z0-9_\-]+)(?:[ \t]+(?<suffix>[a-zA-Z]))?(?<tail>[ \t]*\)?)/g;
-// fenced div 围栏行：::: {custom-style="..."} / ::: {.class} / :::
-// （带属性视为开启，无属性且栈非空视为关闭）
-const FENCE_REGEX = /^\s*(:::+)[ \t]*(\{.*\})?[ \t]*$/;
+// 引用正则（fig/tbl/eq）：支持前括号+空格、子图后缀字母（图1a）、尾括号
+const REF_REGEX = /(\(?[ \t]*)@(fig|tbl|eq):([a-zA-Z0-9_\-]+)(?:[ \t]+([a-zA-Z]))?([ \t]*\)?)/g;
 
 // 各类型标签的显示前缀
 function prefixOf(type) {
@@ -173,15 +166,13 @@ function scanDocumentStats(text, settings) {
         });
     }
 
-    // 2. 扫描引用 (@fig:xxx / @tbl:xxx / @eq:xxx，含 [-@fig:xxx] 抑制前缀形态)
+    // 2. 扫描引用 (@fig:xxx / @tbl:xxx / @eq:xxx)
     const definedIds = new Set(definitions.map(d => d.id));
     let refMatch;
     while ((refMatch = REF_REGEX.exec(text)) !== null) {
-        const g = refMatch.groups;
-        const type = (g.sId !== undefined) ? g.sType : g.rType;
-        const id = (g.sId !== undefined) ? g.sId : g.rId;
+        const id = refMatch[3];
         references.push({
-            id: id, type: type, position: refMatch.index,
+            id: id, type: refMatch[2], position: refMatch.index,
             fullText: refMatch[0], isBroken: !definedIds.has(id)
         });
     }
@@ -244,7 +235,7 @@ function buildDecorationSpecs(text) {
         return pos;
     }
 
-    function addSpec(start, end, type, id, isDef, suffix = "", hasParen = false, plain = false) {
+    function addSpec(start, end, type, id, isDef, suffix = "", hasParen = false) {
         let number = "?";
         let caption = "";
         let targetPos = null;
@@ -299,13 +290,10 @@ function buildDecorationSpecs(text) {
 
         if (!isDef && posMap.has(id)) targetPos = posMap.get(id);
 
-        let widgetText;
-        if (status === "broken") widgetText = id;
-        else if (plain) widgetText = `${number}`;
-        else widgetText = `${prefixOf(type)}${number}`;
+        const widgetText = (status === "broken") ? id : `${prefixOf(type)}${number}`;
 
         specs.push(Decoration.replace({
-            widget: new LabelWidget(widgetText, type, isDef, caption, suffix, hasParen, targetPos, currentSettings, status, plain),
+            widget: new LabelWidget(widgetText, type, isDef, caption, suffix, hasParen, targetPos, currentSettings, status),
             inclusive: false
         }).range(start, end));
     }
@@ -318,48 +306,8 @@ function buildDecorationSpecs(text) {
 
     let refMatch;
     while ((refMatch = REF_REGEX.exec(text)) !== null) {
-        const g = refMatch.groups;
-        if (g.sId !== undefined) {
-            // [-@fig:id] 抑制前缀形态：整体替换为纯编号
-            addSpec(refMatch.index, refMatch.index + refMatch[0].length, g.sType, g.sId, false, "", false, true);
-        } else {
-            const hasParen = (g.lead.includes('(') && g.tail.includes(')'));
-            addSpec(refMatch.index, refMatch.index + refMatch[0].length, g.rType, g.rId, false, g.suffix || "", hasParen);
-        }
-    }
-
-    // 6. 自定义样式 Div（双语题注等）：题注内容行加样式，围栏行淡化
-    //    带属性的围栏视为 Div 开启（无 custom-style 的入栈但不作题注），无属性围栏在栈非空时视为关闭
-    let linePos = 0;
-    const openDivs = [];
-    const lineList = text.split('\n');
-    for (let i = 0; i < lineList.length; i++) {
-        const line = lineList[i];
-        const lineStart = linePos;
-        linePos += line.length + 1;
-
-        const fenceM = line.match(FENCE_REGEX);
-        if (fenceM) {
-            if (fenceM[2]) {
-                const csM = fenceM[2].match(/custom-style[ \t]*=[ \t]*"([^"]+)"/);
-                openDivs.push({ styleName: csM ? csM[1] : null, isCaption: csM ? /caption|题注/i.test(csM[1]) : false });
-                specs.push(Decoration.line({ class: 'pandoc-div-fence' }).range(lineStart));
-            } else if (openDivs.length > 0) {
-                openDivs.pop();
-                specs.push(Decoration.line({ class: 'pandoc-div-fence' }).range(lineStart));
-            }
-            continue;
-        }
-        if (openDivs.length > 0 && line.trim() !== '') {
-            // 从最内层向外找题注样式
-            for (let k = openDivs.length - 1; k >= 0; k--) {
-                if (openDivs[k].isCaption) {
-                    const en = /(?:^|[\s_"-])(en|english|英文)(?:[\s_"-]|$)/i.test(openDivs[k].styleName);
-                    specs.push(Decoration.line({ class: `pandoc-caption-line ${en ? 'pandoc-caption-en' : 'pandoc-caption-cn'}` }).range(lineStart));
-                    break;
-                }
-            }
-        }
+        const hasParen = (refMatch[1].includes('(') && refMatch[5].includes(')'));
+        addSpec(refMatch.index, refMatch.index + refMatch[0].length, refMatch[2], refMatch[3], false, refMatch[4] || "", hasParen);
     }
 
     specs.sort((a, b) => a.from - b.from);
@@ -386,7 +334,6 @@ function getStatsForEditor(editor) {
 function applySpecs(specs, selectionRanges) {
     const kept = [];
     for (const spec of specs) {
-        if (spec.from === spec.to) { kept.push(spec); continue; } // 行装饰（题注/围栏样式）不随光标隐藏
         let suppressed = false;
         for (const range of selectionRanges) {
             if (range.from <= spec.to && range.to >= spec.from) { suppressed = true; break; }
@@ -564,7 +511,7 @@ class PandocLivePreviewSettingTab extends PluginSettingTab {
     display() {
         const { containerEl } = this;
         containerEl.empty();
-        containerEl.createEl('h2', { text: 'Pandoc Live Preview v3.7.0 设置' });
+        containerEl.createEl('h2', { text: 'Pandoc Live Preview v3.6.0 设置' });
 
         new Setting(containerEl).setName('PicGo 上传接口').addText(t => t.setValue(this.plugin.settings.picgoUrl).onChange(async v => { this.plugin.settings.picgoUrl = v; await this.plugin.saveSettings(); }));
         new Setting(containerEl).setName('剪切板自动上传').addToggle(t => t.setValue(this.plugin.settings.autoUpload).onChange(async v => { this.plugin.settings.autoUpload = v; await this.plugin.saveSettings(); }));

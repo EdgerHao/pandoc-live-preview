@@ -10,8 +10,7 @@ This is an Obsidian plugin that provides **real-time preview** for Pandoc citati
 
 - **Real-time Rendering**: Instantly turns `@fig:id`, `@tbl:id`, or `@eq:id` into readable labels like **图1** (Figure 1), **表1** (Table 1), or **式1** (Equation 1) in Live Preview mode.
 - **🧮 Equation Cross-references (New!)**: Define `$$ ... $$ {#eq:name}` and reference it as `@eq:name`, rendered as **式1** with a purple highlight.
-- **📑 Bilingual Thesis Captions (New!)**: Supports `custom-style` fenced divs used by thesis templates (e.g. `Figure Caption` / `Figure Caption EN`): suppressed-prefix citations `[-@fig:id]` render as plain numbers (`图 2` / `Fig. 2`), caption lines are centered and styled (CSS classes `.pandoc-caption-cn` / `.pandoc-caption-en` for customization), and `:::` fence lines are dimmed.
-- **🔍 Bidirectional Audit & Management**:
+- **🔍 Bidirectional Audit & Management (New!)**:
     - **Sidebar View**: A dedicated panel to list all figures and tables. Click the Ribbon icon or use the command to open.
     - **Error Detection**:
         - **⛔ Broken References**: Highlights references (`@fig:xxx`) in **RED** if the ID is missing.
@@ -106,8 +105,7 @@ To get the full academic writing preview experience, we highly recommend using t
 - **实时渲染**：将 `@fig:xxx`、`@tbl:xxx`、`@eq:xxx` 分别渲染为 **图1**、**表1**、**式1**，支持子图后缀（如 `图1a`）。
 - **🧮 公式交叉引用 (New!)**：支持 `$$ ... $$ {#eq:name}` 定义和 `@eq:name` 引用，预览中以紫色样式渲染为 **式1**。
 - - ![](https://wanxinhao88.oss-cn-wuhan-lr.aliyuncs.com/img/20251231135057667.png)
-- **📑 双语题注渲染 (New!)**：支持学位论文模板的 `custom-style` fenced div（如 `Figure Caption` / `Figure Caption EN`）：`[-@fig:id]` 抑制前缀引用渲染为纯编号（`图 2` / `Fig. 2`），题注行居中显示并按中英文区分样式（CSS 类 `.pandoc-caption-cn` / `.pandoc-caption-en` 可自定义），`:::` 围栏行淡化显示。
-- **🔍 双向审计与管理**：
+- **🔍 双向审计与管理 (New!)**：
     - **侧边栏视图**：提供了一个全新的管理面板（点击左侧 Ribbon 图标打开），列出文中所有图表。
     - **查错神器**：
         - **⛔ 失效引用**：如果在文中引用了不存在的 ID，预览会显示红底白字的警告，侧边栏也会列出错误。
@@ -182,20 +180,6 @@ To get the full academic writing preview experience, we highly recommend using t
 * **定义**：`$$ E = mc^2 $$ {#eq:mass-energy}` -> 渲染为 **式1**（紫色虚线边框）。
 * **引用**：`@eq:mass-energy` -> 渲染为 **式1**（紫色实线边框）。
 * **命令**：运行 **"插入公式ID (Insert Equation ID)"** 命令可快速插入带时间戳的 `{#eq:...}` 标签。
-
-**4. 双语题注（学位论文模板）**
-
-```markdown
-::: {custom-style="Figure Caption"}
-图 [-@fig:1-2] 不同润湿性岩石表面油水分布特征
-:::
-
-::: {custom-style="Figure Caption EN"}
-Fig. [-@fig:1-2] Distribution characteristics of oil and water on rock surfaces
-:::
-```
-
-`[-@fig:1-2]` 渲染为纯编号（图 2 / Fig. 2，引用失效仍显示红色警告）；两类题注行居中显示，可通过 CSS 类 `.pandoc-caption-cn` / `.pandoc-caption-en` 自定义中英文样式。
 
 ## 🤝 推荐搭配
 
