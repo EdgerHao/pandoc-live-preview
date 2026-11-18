@@ -1,4 +1,4 @@
-/* styles.css - v3.6.0 (Full Audit + Equation) */
+/* styles.css - v3.7.0 (Full Audit + Equation + Bilingual Caption) */
 
 /* === 1. 基础组件 === */
 .pandoc-widget {
@@ -125,3 +125,17 @@
 .pandoc-gap { display: none; }
 .pandoc-suggest-label { font-weight: bold; color: var(--text-accent); margin-right: 8px; }
 .pandoc-suggest-id { color: var(--text-muted); font-size: 0.85em; }
+
+/* === 8. 自定义样式 Div 双语题注 (custom-style Caption) === */
+/* fenced div 围栏行 ::: {custom-style="..."} / ::: */
+.pandoc-div-fence { opacity: 0.4; font-size: 0.8em; }
+
+/* 题注内容行（Div 内非空行）：居中、字号收敛 */
+.pandoc-caption-line { text-align: center; font-size: 0.9em; }
+/* 中文题注（样式名不含 EN/English/英文）*/
+.pandoc-caption-cn { color: var(--text-normal); }
+/* 英文题注（样式名含 EN/English/英文）*/
+.pandoc-caption-en { color: var(--text-muted); }
+
+/* [-@fig:id] 抑制前缀引用：纯编号，去掉引用底色 */
+.pandoc-widget.pandoc-plain { background: transparent; padding: 0; }
