@@ -1,5 +1,5 @@
-/* main.js - Pandoc Live Preview Plugin (v2.0.1: Increase Suggest Limit) */
-const { Plugin, EditorSuggest, requestUrl, Notice, PluginSettingTab, Setting, FileSystemAdapter, ItemView, WorkspaceLeaf, Debounce } = require('obsidian');
+/* main.js - Pandoc Live Preview Plugin (v3.6.0: 3.5.0 功能基线 + @eq 公式引用 + 源码模式检测 + 大文件性能优化) */
+const { Plugin, EditorSuggest, requestUrl, Notice, PluginSettingTab, Setting, FileSystemAdapter, ItemView, MarkdownView } = require('obsidian');
 const { StateField } = require('@codemirror/state');
 const { Decoration, EditorView, WidgetType } = require('@codemirror/view');
 const path = require('path');
@@ -11,22 +11,23 @@ const VIEW_TYPE_PANDOC_OUTLINE = "pandoc-outline-view";
 const DEFAULT_SETTINGS = {
     picgoUrl: "http://127.0.0.1:36677/upload",
     autoUpload: true,
-    addNewLineAroundImage: true, 
-    hideGapAroundImage: true,    
+    addNewLineAroundImage: true,
+    hideGapAroundImage: true,
     deleteLocal: true,
     figPrefix: "图",
     tblPrefix: "表",
+    eqPrefix: "式",
     autoParentheses: true,
     enableClickToJump: true,
-    
+
     // 样式设置
-    captionColor: "#1e88e5",     
-    captionBold: true,           
-    captionCenter: true,         
-    captionTopOffset: 6,         
-    captionBottomDistance: 12,   
-    referenceColor: "#1e88e5",   
-    referenceBold: false         
+    captionColor: "#1e88e5",
+    captionBold: true,
+    captionCenter: true,
+    captionTopOffset: 6,
+    captionBottomDistance: 12,
+    referenceColor: "#1e88e5",
+    referenceBold: false
 };
 
 // === 辅助函数 ===
@@ -39,15 +40,15 @@ function getTimestamp() {
 class LabelWidget extends WidgetType {
     constructor(text, type, isDef, caption = "", suffix = "", hasParen = false, targetPos = null, settings = null, status = "normal") {
         super();
-        this.text = text;       
-        this.type = type;       
-        this.isDef = isDef;     
+        this.text = text;
+        this.type = type;
+        this.isDef = isDef;
         this.caption = caption;
-        this.suffix = suffix;   
+        this.suffix = suffix;
         this.hasParen = hasParen;
         this.targetPos = targetPos;
         this.settings = settings;
-        this.status = status; 
+        this.status = status;
     }
 
     toDOM(view) {
@@ -58,16 +59,16 @@ class LabelWidget extends WidgetType {
             if (this.caption) content = `${this.text} ${this.caption}`;
         } else {
             if (this.status === "broken") {
-                content = `⛔ @${this.type}:${this.text}`; 
+                content = `⛔ @${this.type}:${this.text}`;
             } else {
                 content = `${this.text}${this.suffix}`;
                 if (this.hasParen) content = `(${content})`;
             }
         }
-        
+
         span.innerText = content;
         span.className = `pandoc-widget pandoc-${this.type} pandoc-${this.isDef ? 'def' : 'ref'}`;
-        
+
         if (this.isDef && this.status === "unused") {
             span.classList.add('pandoc-unused');
             span.title = "警告：此图表未被引用";
@@ -89,7 +90,7 @@ class LabelWidget extends WidgetType {
                 span.style.fontWeight = this.settings.referenceBold ? '600' : '400';
             }
         }
-        
+
         if(this.caption) span.classList.add('has-caption');
 
         if (!this.isDef && this.settings && this.settings.enableClickToJump && this.targetPos !== null && this.status !== "broken") {
@@ -111,56 +112,68 @@ class TopGapWidget extends WidgetType {
 
 // === 3. 全文审计扫描 (Audit) ===
 let currentSettings = Object.assign({}, DEFAULT_SETTINGS);
+// 设置（前缀/样式）变更时递增：已打开的编辑器在下一个事务里检测到 epoch 不一致即重新扫描
+let settingsEpoch = 0;
+// 源码模式下不渲染 widget，显示原始标签文本（切回实时预览自动恢复）
+let isSourceMode = false;
+// 按 Doc 缓存扫描与装饰规格：Doc 不可变（编辑即生成新 Doc，自然失效），
+// 编辑器关闭后缓存随 Doc 一起被 GC 回收，无需手动清理
+const scanCache = new WeakMap();
+
+// 标签定义正则（fig/tbl/eq，标题部分用「前瞻捕获 + 反向引用」模拟原子组，
+// 修复旧写法 (?:\s+.*?)? 在「未闭合 id + 长空行」上的二次方回溯）
+const DEF_REGEX = /\{#(?<dType>fig|tbl|eq):(?<dId>[a-zA-Z0-9_\-]+)(?=(?<dCap>(?:\s+[^\n{}]*)?))\k<dCap>\}/g;
+// 引用正则（fig/tbl/eq）：支持前括号+空格、子图后缀字母（图1a）、尾括号
+const REF_REGEX = /(\(?[ \t]*)@(fig|tbl|eq):([a-zA-Z0-9_\-]+)(?:[ \t]+([a-zA-Z]))?([ \t]*\)?)/g;
+
+// 各类型标签的显示前缀
+function prefixOf(type) {
+    if (type === 'fig') return currentSettings.figPrefix;
+    if (type === 'tbl') return currentSettings.tblPrefix;
+    return currentSettings.eqPrefix;
+}
 
 function scanDocumentStats(text, settings) {
     const definitions = [];
-    const definedIds = new Set();
     const references = [];
-    const undefinedImages = []; 
+    const undefinedImages = [];
 
-    const FIG_PRE = settings.figPrefix;
-    const TBL_PRE = settings.tblPrefix;
-
-    // 1. 扫描定义 ({#fig:xxx})
-    const defRegex = /\{#(fig|tbl):([a-zA-Z0-9_\-]+)(?:\s+.*?)?\}/g;
-    let defMatch;
+    // 1. 扫描定义 ({#fig:xxx} / {#tbl:xxx} / {#eq:xxx})
     let figCount = 0;
     let tblCount = 0;
+    let eqCount = 0;
+    let defMatch;
+    while ((defMatch = DEF_REGEX.exec(text)) !== null) {
+        const g = defMatch.groups;
+        const type = g.dType;
+        const id = g.dId;
+        const number = type === 'fig' ? ++figCount : type === 'tbl' ? ++tblCount : ++eqCount;
+        const label = `${prefixOf(type)}${number}`;
 
-    while ((defMatch = defRegex.exec(text)) !== null) {
-        const type = defMatch[1];
-        const id = defMatch[2];
-        let label = "";
-        if (type === 'fig') label = `${FIG_PRE}${++figCount}`;
-        else if (type === 'tbl') label = `${TBL_PRE}${++tblCount}`;
-
-        // 提取标题
-        let caption = id; 
+        // 提取标题（向上回溯图片 alt / 表格行尾标题；公式默认用 id）
+        let caption = id;
         const lookBackText = text.slice(Math.max(0, defMatch.index - 500), defMatch.index);
-        // 修复：提取标题时也支持尖括号路径
+        // 提取标题时支持尖括号路径
         const imgMatch = lookBackText.match(/!\[([^\]]*)\]\((?:<[^>]+>|[^\)]+)\)\s*$/);
         if (imgMatch && imgMatch[1]) caption = imgMatch[1].trim();
         const tblMatch = lookBackText.match(/(:[^\r\n{]+)$/);
         if (tblMatch) caption = tblMatch[1].substring(1).trim();
 
         definitions.push({
-            id: id, type: type, label: label, fullId: `${type}:${id}`, 
+            id: id, type: type, label: label, fullId: `${type}:${id}`,
             position: defMatch.index, caption: caption || id,
-            isUnused: true 
+            isUnused: true
         });
-        definedIds.add(id);
     }
 
-    // 2. 扫描引用 (@fig:xxx)
-    const refRegex = /@(fig|tbl):([a-zA-Z0-9_\-]+)/g;
+    // 2. 扫描引用 (@fig:xxx / @tbl:xxx / @eq:xxx)
+    const definedIds = new Set(definitions.map(d => d.id));
     let refMatch;
-    while ((refMatch = refRegex.exec(text)) !== null) {
-        const id = refMatch[2];
-        const isBroken = !definedIds.has(id);
-        
+    while ((refMatch = REF_REGEX.exec(text)) !== null) {
+        const id = refMatch[3];
         references.push({
-            id: id, type: refMatch[1], position: refMatch.index, 
-            fullText: refMatch[0], isBroken: isBroken
+            id: id, type: refMatch[2], position: refMatch.index,
+            fullText: refMatch[0], isBroken: !definedIds.has(id)
         });
     }
 
@@ -170,17 +183,12 @@ function scanDocumentStats(text, settings) {
         if (usedIds.has(def.id)) def.isUnused = false;
     });
 
-    // 4. 扫描未定义ID的图片 (【核心修复】：支持尖括号路径 <path> 和普通路径)
-    // 解释：\((?:<[^>]+>|[^\)]+)\)
-    // (?: ... ) 是非捕获组
-    // <[^>]+> 匹配尖括号包裹的内容 (处理含括号的路径)
-    // | 或者
-    // [^\)]+ 匹配不含右括号的普通路径
+    // 4. 扫描未定义ID的图片（支持尖括号路径 <path> 和普通路径）
     const imgRegex = /!\[([^\]]*)\]\((?:<[^>]+>|[^\)]+)\)/g;
     let imgM;
     while ((imgM = imgRegex.exec(text)) !== null) {
         const endPos = imgM.index + imgM[0].length;
-        const nextText = text.slice(endPos, endPos + 50); 
+        const nextText = text.slice(endPos, endPos + 50);
         if (!/^\s*\{#fig:/.test(nextText)) {
             undefinedImages.push({ caption: imgM[1] || "未命名图片", position: imgM.index });
         }
@@ -193,128 +201,182 @@ function scanDocumentStats(text, settings) {
 }
 
 // === 4. 核心装饰器 ===
-const pandocRefField = StateField.define({
-    create(state) { return Decoration.none; },
-    update(oldDecorations, transaction) {
-        if (!transaction.docChanged && !transaction.selection) return oldDecorations;
+// 只依赖文本的重活（编号/标题回溯/空行吞噬/间距组件）按 Doc 算一次并缓存；
+// 光标重叠的显隐切换在每次事务里用缓存好的规格廉价重建，大文档不再每个光标移动都全文重扫
+function buildDecorationSpecs(text) {
+    const stats = scanDocumentStats(text, currentSettings);
+    const definitions = stats.definitions;
 
-        const state = transaction.state;
-        const text = state.doc.toString();
-        const widgets = [];
-        const selectionRanges = state.selection.ranges;
-        
-        const { definitions, definedIds } = scanDocumentStats(text, currentSettings);
-        
-        const figMap = new Map();
-        const tblMap = new Map();
-        const posMap = new Map();
-        const unusedMap = new Map(); 
-        const defSet = new Set();    
-        
-        definitions.forEach(def => {
-            if (def.type === 'fig') figMap.set(def.id, def.label.replace(currentSettings.figPrefix, ''));
-            if (def.type === 'tbl') tblMap.set(def.id, def.label.replace(currentSettings.tblPrefix, ''));
-            posMap.set(def.id, def.position);
-            unusedMap.set(def.id, def.isUnused);
-            defSet.add(def.id);
-        });
+    const numbers = new Map();   // fullId -> 编号
+    const posMap = new Map();    // id -> 定义位置
+    const unusedMap = new Map(); // id -> 是否未被引用
+    const defSet = new Set();    // 已定义的 id 集合
 
-        function checkCursorOverlap(start, end) {
-            for (const range of selectionRanges) { if (range.from <= end && range.to >= start) return true; }
-            return false;
+    definitions.forEach(def => {
+        numbers.set(`${def.type}:${def.id}`, def.label.slice(prefixOf(def.type).length));
+        posMap.set(def.id, def.position);
+        unusedMap.set(def.id, def.isUnused);
+        defSet.add(def.id);
+    });
+
+    const specs = [];
+
+    function consumeImmediateNewlines(text, currentStart) {
+        let tempStart = currentStart;
+        while (tempStart > 0) {
+            if (text[tempStart - 1].match(/[\n\r ]/)) tempStart--; else break;
         }
-        function consumeImmediateNewlines(text, currentStart) {
-            let tempStart = currentStart;
-            while (tempStart > 0) {
-                if (text[tempStart - 1].match(/[\n\r ]/)) tempStart--; else break;
-            }
-            return tempStart;
+        return tempStart;
+    }
+    function consumeHorizontalSpaces(text, pos) {
+        while (pos < text.length) {
+            if (text[pos] === ' ' || text[pos] === '\t') pos++; else break;
         }
-        function consumeHorizontalSpaces(text, pos) {
-            while (pos < text.length) {
-                if (text[pos] === ' ' || text[pos] === '\t') pos++; else break;
-            }
-            return pos;
+        return pos;
+    }
+
+    function addSpec(start, end, type, id, isDef, suffix = "", hasParen = false) {
+        let number = "?";
+        let caption = "";
+        let targetPos = null;
+        let status = "normal";
+
+        if (isDef) {
+            if (unusedMap.has(id) && unusedMap.get(id)) status = "unused";
+        } else {
+            if (!defSet.has(id)) status = "broken";
         }
 
-        function addDecoration(start, end, type, id, isDef, suffix = "", hasParen = false) {
-            let number = "?";
-            let prefix = type === 'fig' ? currentSettings.figPrefix : currentSettings.tblPrefix;
-            let caption = "";
-            let targetPos = null;
-            let status = "normal";
-
+        if (type === 'fig') {
+            if (numbers.has(`fig:${id}`)) number = numbers.get(`fig:${id}`);
             if (isDef) {
-                if (unusedMap.has(id) && unusedMap.get(id)) status = "unused";
-            } else {
-                if (!defSet.has(id)) status = "broken";
-            }
+                const lookBackLimit = Math.max(0, start - 500);
+                const precedingText = text.slice(lookBackLimit, start);
+                const imgMatch = precedingText.match(/!\[([^\]]*)\]\([^\)]+\)\s*$/);
 
-            if (type === 'fig') {
-                if (figMap.has(id)) number = figMap.get(id);
-                if (isDef) {
-                    const lookBackLimit = Math.max(0, start - 500);
-                    const precedingText = text.slice(lookBackLimit, start);
-                    const imgMatch = precedingText.match(/!\[([^\]]*)\]\([^\)]+\)\s*$/);
-                    
-                    if (imgMatch) {
-                        caption = imgMatch[1].trim(); 
-                        if (currentSettings.hideGapAroundImage) {
-                            const imgStartPos = start - imgMatch[0].length; 
-                            if (imgStartPos > 0 && text[imgStartPos - 1] === '\n') {
-                                const gapStart = imgStartPos - 1;
-                                if (!checkCursorOverlap(gapStart, imgStartPos)) widgets.push(Decoration.replace({ widget: new TopGapWidget(), inclusive: false }).range(gapStart, imgStartPos));
-                            }
-                            start = consumeImmediateNewlines(text, start);
-                        }
-                    }
+                if (imgMatch) {
+                    caption = imgMatch[1].trim();
                     if (currentSettings.hideGapAroundImage) {
-                        let checkPos = consumeHorizontalSpaces(text, end);
-                        if (checkPos < text.length) {
-                            if (text.startsWith('\r\n', checkPos)) end = checkPos + 2; 
-                            else if (text[checkPos] === '\n') end = checkPos + 1;
+                        const imgStartPos = start - imgMatch[0].length;
+                        if (imgStartPos > 0 && text[imgStartPos - 1] === '\n') {
+                            const gapStart = imgStartPos - 1;
+                            specs.push(Decoration.replace({ widget: new TopGapWidget(), inclusive: false }).range(gapStart, imgStartPos));
                         }
-                    }
-                }
-            } else if (type === 'tbl') {
-                if (tblMap.has(id)) number = tblMap.get(id);
-                if (isDef) {
-                    const lookBackLimit = Math.max(0, start - 1000); 
-                    const match = text.slice(lookBackLimit, start).match(/(:[^\r\n{]+)$/);
-                    if (match) {
-                        caption = match[1].substring(1).trim(); 
-                        start = start - match[0].length;
                         start = consumeImmediateNewlines(text, start);
                     }
                 }
+                if (currentSettings.hideGapAroundImage) {
+                    let checkPos = consumeHorizontalSpaces(text, end);
+                    if (checkPos < text.length) {
+                        if (text.startsWith('\r\n', checkPos)) end = checkPos + 2;
+                        else if (text[checkPos] === '\n') end = checkPos + 1;
+                    }
+                }
             }
-
-            if (!isDef && posMap.has(id)) targetPos = posMap.get(id);
-            if (checkCursorOverlap(start, end)) return;
-
-            const widgetText = (status === "broken") ? id : `${prefix}${number}`;
-
-            const deco = Decoration.replace({
-                widget: new LabelWidget(widgetText, type, isDef, caption, suffix, hasParen, targetPos, currentSettings, status),
-                inclusive: false
-            }).range(start, end);
-            widgets.push(deco);
+        } else if (type === 'tbl') {
+            if (numbers.has(`tbl:${id}`)) number = numbers.get(`tbl:${id}`);
+            if (isDef) {
+                const lookBackLimit = Math.max(0, start - 1000);
+                const match = text.slice(lookBackLimit, start).match(/(:[^\r\n{]+)$/);
+                if (match) {
+                    caption = match[1].substring(1).trim();
+                    start = start - match[0].length;
+                    start = consumeImmediateNewlines(text, start);
+                }
+            }
+        } else if (type === 'eq') {
+            if (numbers.has(`eq:${id}`)) number = numbers.get(`eq:${id}`);
         }
 
-        const defRegex = /\{#(fig|tbl):([a-zA-Z0-9_\-]+)(?:\s+.*?)?\}/g;
-        let defMatch;
-        while ((defMatch = defRegex.exec(text)) !== null) addDecoration(defMatch.index, defMatch.index + defMatch[0].length, defMatch[1], defMatch[2], true);
+        if (!isDef && posMap.has(id)) targetPos = posMap.get(id);
 
-        const refRegex = /(\(?[ \t]*)@(fig|tbl):([a-zA-Z0-9_\-]+)(?:[ \t]+([a-zA-Z]))?([ \t]*\)?)/g;
-        let refMatch;
-        while ((refMatch = refRegex.exec(text)) !== null) {
-            const hasParen = (refMatch[1].includes('(') && refMatch[5].includes(')'));
-            addDecoration(refMatch.index, refMatch.index + refMatch[0].length, refMatch[2], refMatch[3], false, refMatch[4] || "", hasParen);
+        const widgetText = (status === "broken") ? id : `${prefixOf(type)}${number}`;
+
+        specs.push(Decoration.replace({
+            widget: new LabelWidget(widgetText, type, isDef, caption, suffix, hasParen, targetPos, currentSettings, status),
+            inclusive: false
+        }).range(start, end));
+    }
+
+    let defMatch;
+    while ((defMatch = DEF_REGEX.exec(text)) !== null) {
+        const g = defMatch.groups;
+        addSpec(defMatch.index, defMatch.index + defMatch[0].length, g.dType, g.dId, true);
+    }
+
+    let refMatch;
+    while ((refMatch = REF_REGEX.exec(text)) !== null) {
+        const hasParen = (refMatch[1].includes('(') && refMatch[5].includes(')'));
+        addSpec(refMatch.index, refMatch.index + refMatch[0].length, refMatch[2], refMatch[3], false, refMatch[4] || "", hasParen);
+    }
+
+    specs.sort((a, b) => a.from - b.from);
+    return { stats, specs };
+}
+
+// 按 Doc 复用扫描与装饰规格：编辑生成新 Doc 自动 miss；设置变更（epoch 不一致）自动失效
+function getDecorations(doc) {
+    const cached = scanCache.get(doc);
+    if (cached && cached.epoch === settingsEpoch) return cached;
+    const result = buildDecorationSpecs(doc.toString());
+    result.epoch = settingsEpoch;
+    scanCache.set(doc, result);
+    return result;
+}
+
+// 从编辑器取扫描结果：优先复用按 Doc 的共享缓存（与装饰器共用），避免重复全文扫描
+function getStatsForEditor(editor) {
+    if (editor.cm && editor.cm.state && editor.cm.state.doc) return getDecorations(editor.cm.state.doc).stats;
+    return buildDecorationSpecs(editor.getValue()).stats;
+}
+
+// 光标落在标签上时显示原始源码（与 3.5.0 行为一致）
+function applySpecs(specs, selectionRanges) {
+    const kept = [];
+    for (const spec of specs) {
+        let suppressed = false;
+        for (const range of selectionRanges) {
+            if (range.from <= spec.to && range.to >= spec.from) { suppressed = true; break; }
         }
+        if (!suppressed) kept.push(spec);
+    }
+    return Decoration.set(kept, true);
+}
 
-        return Decoration.set(widgets.sort((a, b) => a.from - b.from));
+const pandocRefField = StateField.define({
+    create(state) {
+        // 打开文档时立即渲染（源码模式下暂不显示，索引仍建立，切回实时预览即可恢复）
+        const { specs } = getDecorations(state.doc);
+        return {
+            epoch: settingsEpoch,
+            sourceMode: isSourceMode,
+            specs,
+            decorations: isSourceMode ? Decoration.none : applySpecs(specs, state.selection.ranges)
+        };
     },
-    provide: (field) => EditorView.decorations.from(field)
+    update(value, transaction) {
+        // 文档变化，或设置（前缀/样式）刚被修改（epoch 不一致）→ 重新扫描
+        if (transaction.docChanged || value.epoch !== settingsEpoch) {
+            const { specs } = getDecorations(transaction.state.doc);
+            return {
+                epoch: settingsEpoch,
+                sourceMode: isSourceMode,
+                specs,
+                decorations: isSourceMode ? Decoration.none : applySpecs(specs, transaction.state.selection.ranges)
+            };
+        }
+        // 模式切换、纯光标/选择变化：不重扫全文，用已有规格廉价重建（处理移入/移出标签的显隐切换）
+        if (value.sourceMode !== isSourceMode || transaction.selection) {
+            return {
+                epoch: value.epoch,
+                sourceMode: isSourceMode,
+                specs: value.specs,
+                decorations: isSourceMode ? Decoration.none : applySpecs(value.specs, transaction.state.selection.ranges)
+            };
+        }
+        return value;
+    },
+    provide: (field) => EditorView.decorations.from(field, (v) => v.decorations)
 });
 
 // === 5. 侧边栏视图 ===
@@ -322,7 +384,7 @@ class PandocOutlineView extends ItemView {
     constructor(leaf, plugin) {
         super(leaf);
         this.plugin = plugin;
-        this.updateDebounce = this.debounce(this.updateView.bind(this), 500); 
+        this.updateDebounce = this.debounce(this.updateView.bind(this), 500);
     }
 
     getViewType() { return VIEW_TYPE_PANDOC_OUTLINE; }
@@ -340,14 +402,13 @@ class PandocOutlineView extends ItemView {
         container.empty();
         container.addClass("pandoc-outline-container");
 
-        const view = this.app.workspace.getActiveViewOfType(require('obsidian').MarkdownView);
+        const view = this.app.workspace.getActiveViewOfType(MarkdownView);
         if (!view) {
             container.createEl("div", { text: "未激活 Markdown 编辑器" });
             return;
         }
 
-        const text = view.editor.getValue();
-        const { definitions, orphanRefs, undefinedImages } = scanDocumentStats(text, this.plugin.settings);
+        const { definitions, orphanRefs, undefinedImages } = getStatsForEditor(view.editor);
 
         const header = container.createEl("div", { cls: "pandoc-outline-header" });
         header.createEl("div", { text: `📊 统计概览` });
@@ -416,24 +477,23 @@ class PandocSuggest extends EditorSuggest {
     constructor(plugin) {
         super(plugin.app);
         this.plugin = plugin;
-        this.limit = 1000; // 【核心修复】增加建议数量限制，解决大文档显示不全问题
+        this.limit = 1000; // 增加建议数量限制，解决大文档显示不全问题
     }
     onTrigger(cursor, editor, file) {
         const line = editor.getLine(cursor.line);
         const sub = line.substring(0, cursor.ch);
-        const match = sub.match(/(@(fig|tbl)?:?([a-zA-Z0-9_\-]*))$/);
+        const match = sub.match(/(@(fig|tbl|eq)?:?([a-zA-Z0-9_\-]*))$/);
         if (match) return { start: { line: cursor.line, ch: match.index }, end: cursor, query: match[0] };
         return null;
     }
     getSuggestions(context) {
-        const text = context.editor.getValue();
-        const { definitions } = scanDocumentStats(text, this.plugin.settings);
+        const defs = getStatsForEditor(context.editor).definitions;
         const query = context.query.toLowerCase();
-        return definitions.filter(def => `@${def.type}:${def.id}`.toLowerCase().includes(query))
+        return defs.filter(def => `@${def.type}:${def.id}`.toLowerCase().includes(query))
                    .map(def => ({ ...def, suggestionText: `@${def.type}:${def.id}` }));
     }
     renderSuggestion(suggestion, el) {
-        el.createEl("span", { text: suggestion.label, cls: "pandoc-suggest-label" }); 
+        el.createEl("span", { text: suggestion.label, cls: "pandoc-suggest-label" });
         el.createEl("small", { text: ` (${suggestion.id})`, cls: "pandoc-suggest-id" });
     }
     selectSuggestion(suggestion, event) {
@@ -451,31 +511,32 @@ class PandocLivePreviewSettingTab extends PluginSettingTab {
     display() {
         const { containerEl } = this;
         containerEl.empty();
-        containerEl.createEl('h2', { text: 'Pandoc Live Preview v2.0.1 设置' });
+        containerEl.createEl('h2', { text: 'Pandoc Live Preview v3.6.0 设置' });
 
         new Setting(containerEl).setName('PicGo 上传接口').addText(t => t.setValue(this.plugin.settings.picgoUrl).onChange(async v => { this.plugin.settings.picgoUrl = v; await this.plugin.saveSettings(); }));
         new Setting(containerEl).setName('剪切板自动上传').addToggle(t => t.setValue(this.plugin.settings.autoUpload).onChange(async v => { this.plugin.settings.autoUpload = v; await this.plugin.saveSettings(); }));
         new Setting(containerEl).setName('图片前后增加空行').addToggle(t => t.setValue(this.plugin.settings.addNewLineAroundImage).onChange(async v => { this.plugin.settings.addNewLineAroundImage = v; await this.plugin.saveSettings(); }));
-        new Setting(containerEl).setName('预览时隐藏图片空行').addToggle(t => t.setValue(this.plugin.settings.hideGapAroundImage).onChange(async v => { this.plugin.settings.hideGapAroundImage = v; this.plugin.app.workspace.updateOptions(); await this.plugin.saveSettings(); }));
+        new Setting(containerEl).setName('预览时隐藏图片空行').addToggle(t => t.setValue(this.plugin.settings.hideGapAroundImage).onChange(async v => { this.plugin.settings.hideGapAroundImage = v; this.plugin.refreshEditors(); await this.plugin.saveSettings(); }));
         new Setting(containerEl).setName('上传后移除本地文件').addToggle(t => t.setValue(this.plugin.settings.deleteLocal).onChange(async v => { this.plugin.settings.deleteLocal = v; await this.plugin.saveSettings(); }));
 
         containerEl.createEl('h3', { text: '视觉与位置' });
-        new Setting(containerEl).setName('图表名颜色').addColorPicker(c => c.setValue(this.plugin.settings.captionColor).onChange(async v => { this.plugin.settings.captionColor = v; currentSettings.captionColor = v; await this.plugin.saveSettings(); this.plugin.app.workspace.updateOptions(); }));
-        new Setting(containerEl).setName('图表名加粗').addToggle(t => t.setValue(this.plugin.settings.captionBold).onChange(async v => { this.plugin.settings.captionBold = v; currentSettings.captionBold = v; await this.plugin.saveSettings(); this.plugin.app.workspace.updateOptions(); }));
-        new Setting(containerEl).setName('图表名居中显示').addToggle(t => t.setValue(this.plugin.settings.captionCenter).onChange(async v => { this.plugin.settings.captionCenter = v; currentSettings.captionCenter = v; await this.plugin.saveSettings(); this.plugin.app.workspace.updateOptions(); }));
-        
-        new Setting(containerEl).setName('图表名 上方 间距').addSlider(s => s.setLimits(-50, 50, 1).setValue(this.plugin.settings.captionTopOffset).setDynamicTooltip().onChange(async v => { this.plugin.settings.captionTopOffset = v; currentSettings.captionTopOffset = v; await this.plugin.saveSettings(); this.plugin.app.workspace.updateOptions(); }));
-        new Setting(containerEl).setName('图表名 下方 间距').addSlider(s => s.setLimits(0, 100, 1).setValue(this.plugin.settings.captionBottomDistance).setDynamicTooltip().onChange(async v => { this.plugin.settings.captionBottomDistance = v; currentSettings.captionBottomDistance = v; await this.plugin.saveSettings(); this.plugin.app.workspace.updateOptions(); }));
+        new Setting(containerEl).setName('图表名颜色').addColorPicker(c => c.setValue(this.plugin.settings.captionColor).onChange(async v => { this.plugin.settings.captionColor = v; currentSettings.captionColor = v; await this.plugin.saveSettings(); this.plugin.refreshEditors(); }));
+        new Setting(containerEl).setName('图表名加粗').addToggle(t => t.setValue(this.plugin.settings.captionBold).onChange(async v => { this.plugin.settings.captionBold = v; currentSettings.captionBold = v; await this.plugin.saveSettings(); this.plugin.refreshEditors(); }));
+        new Setting(containerEl).setName('图表名居中显示').addToggle(t => t.setValue(this.plugin.settings.captionCenter).onChange(async v => { this.plugin.settings.captionCenter = v; currentSettings.captionCenter = v; await this.plugin.saveSettings(); this.plugin.refreshEditors(); }));
 
-        new Setting(containerEl).setName('引用处颜色').addColorPicker(c => c.setValue(this.plugin.settings.referenceColor).onChange(async v => { this.plugin.settings.referenceColor = v; currentSettings.referenceColor = v; await this.plugin.saveSettings(); this.plugin.app.workspace.updateOptions(); }));
-        new Setting(containerEl).setName('引用处加粗').addToggle(t => t.setValue(this.plugin.settings.referenceBold).onChange(async v => { this.plugin.settings.referenceBold = v; currentSettings.referenceBold = v; await this.plugin.saveSettings(); this.plugin.app.workspace.updateOptions(); }));
+        new Setting(containerEl).setName('图表名 上方 间距').addSlider(s => s.setLimits(-50, 50, 1).setValue(this.plugin.settings.captionTopOffset).setDynamicTooltip().onChange(async v => { this.plugin.settings.captionTopOffset = v; currentSettings.captionTopOffset = v; await this.plugin.saveSettings(); this.plugin.refreshEditors(); }));
+        new Setting(containerEl).setName('图表名 下方 间距').addSlider(s => s.setLimits(0, 100, 1).setValue(this.plugin.settings.captionBottomDistance).setDynamicTooltip().onChange(async v => { this.plugin.settings.captionBottomDistance = v; currentSettings.captionBottomDistance = v; await this.plugin.saveSettings(); this.plugin.refreshEditors(); }));
 
-        new Setting(containerEl).setName('启用单击跳转').addToggle(t => t.setValue(this.plugin.settings.enableClickToJump).onChange(async v => { this.plugin.settings.enableClickToJump = v; this.plugin.app.workspace.updateOptions(); await this.plugin.saveSettings(); }));
+        new Setting(containerEl).setName('引用处颜色').addColorPicker(c => c.setValue(this.plugin.settings.referenceColor).onChange(async v => { this.plugin.settings.referenceColor = v; currentSettings.referenceColor = v; await this.plugin.saveSettings(); this.plugin.refreshEditors(); }));
+        new Setting(containerEl).setName('引用处加粗').addToggle(t => t.setValue(this.plugin.settings.referenceBold).onChange(async v => { this.plugin.settings.referenceBold = v; currentSettings.referenceBold = v; await this.plugin.saveSettings(); this.plugin.refreshEditors(); }));
+
+        new Setting(containerEl).setName('启用单击跳转').addToggle(t => t.setValue(this.plugin.settings.enableClickToJump).onChange(async v => { this.plugin.settings.enableClickToJump = v; await this.plugin.saveSettings(); this.plugin.refreshEditors(); }));
         new Setting(containerEl).setName('引用自动加括号').addToggle(t => t.setValue(this.plugin.settings.autoParentheses).onChange(async v => { this.plugin.settings.autoParentheses = v; await this.plugin.saveSettings(); }));
 
         containerEl.createEl('h3', { text: '前缀设置' });
-        new Setting(containerEl).setName('图片前缀').addText(t => t.setValue(this.plugin.settings.figPrefix).onChange(async v => { this.plugin.settings.figPrefix = v; currentSettings.figPrefix = v; await this.plugin.saveSettings(); this.plugin.app.workspace.updateOptions(); }));
-        new Setting(containerEl).setName('表格前缀').addText(t => t.setValue(this.plugin.settings.tblPrefix).onChange(async v => { this.plugin.settings.tblPrefix = v; currentSettings.tblPrefix = v; await this.plugin.saveSettings(); this.plugin.app.workspace.updateOptions(); }));
+        new Setting(containerEl).setName('图片前缀').addText(t => t.setValue(this.plugin.settings.figPrefix).onChange(async v => { this.plugin.settings.figPrefix = v; currentSettings.figPrefix = v; await this.plugin.saveSettings(); this.plugin.refreshEditors(); }));
+        new Setting(containerEl).setName('表格前缀').addText(t => t.setValue(this.plugin.settings.tblPrefix).onChange(async v => { this.plugin.settings.tblPrefix = v; currentSettings.tblPrefix = v; await this.plugin.saveSettings(); this.plugin.refreshEditors(); }));
+        new Setting(containerEl).setName('公式前缀').addText(t => t.setValue(this.plugin.settings.eqPrefix).onChange(async v => { this.plugin.settings.eqPrefix = v; currentSettings.eqPrefix = v; await this.plugin.saveSettings(); this.plugin.refreshEditors(); }));
     }
 }
 
@@ -490,9 +551,13 @@ module.exports = class PandocLivePreview extends Plugin {
         this.addSettingTab(new PandocLivePreviewSettingTab(this.app, this));
         this.addCommand({ id: 'insert-fig-id', name: 'Insert Figure ID', editorCallback: (e) => e.replaceSelection(`{#fig:${getTimestamp()}}`) });
         this.addCommand({ id: 'insert-tbl-id', name: 'Insert Table ID', editorCallback: (e) => e.replaceSelection(`{#tbl:${getTimestamp()}}`) });
+        this.addCommand({ id: 'insert-eq-id', name: 'Insert Equation ID', editorCallback: (e) => e.replaceSelection(`{#eq:${getTimestamp()}}`) });
         this.addCommand({ id: 'open-pandoc-outline', name: '打开图表管理面板 (Pandoc Manager)', callback: () => this.activateView() });
         this.addRibbonIcon('image-file', 'Pandoc 图表管理', () => { this.activateView(); });
         this.registerEvent(this.app.workspace.on('editor-paste', this.handleImagePaste.bind(this)));
+        // 源码模式检测：源码模式下显示原始标签，切回实时预览恢复渲染
+        this.registerEvent(this.app.workspace.on('layout-ready', () => { this.updateSourceModeStatus(); }));
+        this.registerEvent(this.app.workspace.on('active-leaf-change', () => { this.updateSourceModeStatus(); }));
     }
 
     async activateView() {
@@ -508,6 +573,33 @@ module.exports = class PandocLivePreview extends Plugin {
     async loadSettings() { this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData()); }
     async saveSettings() { await this.saveData(this.settings); }
 
+    // 把空事务派发给所有已打开的编辑器，触发装饰字段立即重算；
+    // 若运行环境不支持 iterateCodeMirrors，则等下一次任意事务再生效
+    dispatchToAllEditors() {
+        if (typeof this.app.workspace.iterateCodeMirrors === 'function') {
+            this.app.workspace.iterateCodeMirrors((cm) => {
+                if (cm && typeof cm.dispatch === 'function') cm.dispatch({});
+            });
+        }
+    }
+
+    // 设置（前缀/样式）变更后：递增 epoch 并让所有编辑器立即重扫
+    refreshEditors() {
+        settingsEpoch++;
+        this.dispatchToAllEditors();
+    }
+
+    updateSourceModeStatus() {
+        const activeLeaf = this.app.workspace.activeLeaf;
+        const mode = activeLeaf && activeLeaf.view ? activeLeaf.view.getMode() : null;
+        const next = (mode === 'source');
+        if (next !== isSourceMode) {
+            isSourceMode = next;
+            this.dispatchToAllEditors(); // 模式切换立即生效，不再等待下一次编辑
+        }
+    }
+
+    // === PicGo 上传逻辑 (文件路径版) ===
     async handleImagePaste(evt, editor, view) {
         if (!this.settings.autoUpload) return;
         if (evt.clipboardData.files.length > 0) {

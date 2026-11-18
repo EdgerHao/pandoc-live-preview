@@ -1,10 +1,10 @@
 # Pandoc Live Preview for Obsidian
 
-[中文说明](#中文说明) | [Report Bug](https://github.com/wanxinhao/pandoc-live-preview/issues)
+[中文说明](#中文说明) | [Report Bug](https://github.com/EdgerHao/pandoc-live-preview/issues)
 
 This is an Obsidian plugin that provides **real-time preview** for Pandoc citations and cross-references. It is specifically optimized for **Academic Writing** workflows involving Pandoc and CJK (Chinese/Japanese/Korean) layouts.
 
-**v2.0.0 Ultimate Update**: Now features **Bidirectional Audit**, **Visual Customization**, **Precise Layout Control**, and **PicGo Integration**!
+**v3.6.0**: Restores the full **Bidirectional Audit**, **Visual Customization**, **Precise Layout Control**, and **PicGo Integration** feature set (lost in the v1.6.x line), adds **Equation Cross-references** (`@eq:`), source-mode detection, and large-file performance optimizations.
 
 ## ✨ Features
 
@@ -33,7 +33,7 @@ This is an Obsidian plugin that provides **real-time preview** for Pandoc citati
 
 ### Method 1: BRAT (Recommended)
 1. Install the **BRAT** plugin from the Obsidian Community Plugins.
-2. Add this repository URL: `https://github.com/wanxinhao/pandoc-live-preview`
+2. Add this repository URL: `https://github.com/EdgerHao/pandoc-live-preview`
 3. The plugin will be automatically installed and updated.
 
 ### Method 2: Manual Installation
@@ -98,7 +98,7 @@ To get the full academic writing preview experience, we highly recommend using t
 
 这是一个专为 Obsidian 学术写作设计的插件，主要用于解决 Pandoc 交叉引用（Cross-ref）在 Obsidian 实时预览模式下无法直观显示的问题。
 
-**v2.0.0 终极更新**：集成了**双向审计与管理**、**视觉全自定义**、**双向位置微调**、**智能空行消除**以及 **PicGo 自动上传**！
+**v3.6.0**：恢复并集成了**双向审计与管理**、**视觉全自定义**、**双向位置微调**、**智能空行消除**以及 **PicGo 自动上传**（v1.6.x 线丢失的全部功能），新增**公式交叉引用**（`@eq:`）、源码模式检测与大文件性能优化。
 
 ## ✨ 核心功能
 
