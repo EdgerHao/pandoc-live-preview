@@ -1,86 +1,115 @@
-/* === 1. 基础公共样式 === */
+/* styles.css - v3.5.0 (Full Audit) */
+
+/* === 1. 基础组件 === */
 .pandoc-widget {
-    display: inline-block;
-    padding: 0 4px;
     border-radius: 4px;
+    padding: 0;
     font-size: 0.9em;
-    font-weight: 500;
-    cursor: text;       /* 鼠标变成输入样式，提示可编辑 */
-    user-select: none;  /* 禁止选中标签内的文字 */
     transition: all 0.2s ease;
-    margin: 0 2px;
+    user-select: none;
 }
 
-/* === 2. 图片 (Figure) 的配色方案：蓝色系 === */
+/* === 2. 引用处 (Reference) === */
+.pandoc-ref {
+    background-color: rgba(var(--color-accent-rgb), 0.12);
+    display: inline;
+    padding: 0 2px;
+}
+.pandoc-ref:hover {
+    background-color: rgba(var(--color-accent-rgb), 0.3);
+    text-decoration: underline;
+}
+.pandoc-ref.pandoc-clickable { cursor: pointer; }
+.pandoc-ref:not(.pandoc-clickable) { cursor: text; }
 
-/* 图片【定义处】：{#fig:xxx} -> (图1) */
-/* 使用深蓝色 + 虚线边框，表示这是“源头” */
+/* 【新增】失效引用 (Broken Reference) */
+/* 当 @fig:xxx 找不到对应的 {#fig:xxx} 时 */
+.pandoc-ref.pandoc-broken {
+    color: #ffffff !important;
+    background-color: #d32f2f !important; /* 红底白字，醒目 */
+    font-weight: bold;
+    border-radius: 4px;
+    padding: 0 4px;
+    text-decoration: line-through; /* 删除线 */
+}
+
+/* === 3. 定义处 (Definition) === */
+.pandoc-def {
+    display: block;         
+    width: 100%;
+    line-height: 1.4;
+    font-size: 0.9em;
+    background-color: transparent; 
+    border: none;
+    cursor: text;
+    margin: 0; 
+}
+
+/* 定义了但未被引用 -> 标橙警告 */
+.pandoc-def.pandoc-unused {
+    color: #e67e22 !important; 
+    text-decoration: underline wavy #e67e22;
+}
+
+/* === 4. 图片标题 === */
 .pandoc-fig.pandoc-def {
-    color: #0d47a1;                 /* 深蓝色文字 */
-    background-color: #e3f2fd;      /* 极浅蓝背景 */
-    border: 1px dashed #1565c0;     /* 蓝色虚线边框 */
-    font-weight: bold;              /* 加粗 */
+    color: #1e88e5; 
+    margin-top: 6px !important;  
+    margin-bottom: 12px !important;
 }
 
-/* 图片【引用处】：@fig:xxx -> (图1) */
-/* 使用普通蓝色 + 实线边框，表示这是“链接” */
-.pandoc-fig.pandoc-ref {
-    color: #2196f3;                 /* 标准蓝文字 */
-    background-color: rgba(33, 150, 243, 0.1); /* 浅蓝透明背景 */
-    border: 1px solid rgba(33, 150, 243, 0.3); /* 浅蓝实线边框 */
-}
-
-/* === 3. 表格 (Table) 的配色方案：橙色系 (与蓝色形成对比) === */
-/* 如果你也想表格是蓝色，把下面的颜色代码改成和上面一样即可 */
-
-/* 表格【定义处】：{#tbl:xxx} -> (表1) */
+/* === 5. 表格标题 === */
 .pandoc-tbl.pandoc-def {
-    color: #e65100;                 /* 深橙色 */
-    background-color: #fff3e0;      /* 极浅橙背景 */
-    border: 1px dashed #ef6c00;     /* 橙色虚线边框 */
+    margin-top: 6px !important;
+    margin-bottom: 6px !important;
+}
+
+/* === 6. 侧边栏大纲 (Pandoc Outline View) === */
+.pandoc-outline-container {
+    padding: 10px;
+}
+.pandoc-outline-header {
     font-weight: bold;
+    margin-bottom: 10px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    padding-bottom: 5px;
 }
-
-/* 表格【引用处】：@tbl:xxx -> (表1) */
-.pandoc-tbl.pandoc-ref {
-    color: #ff9800;                 /* 标准橙 */
-    background-color: rgba(255, 152, 0, 0.1);
-    border: 1px solid rgba(255, 152, 0, 0.3);
-}
-
-/* === 3.5 公式 (Equation) 的配色方案：紫色系 (与蓝色和橙色形成对比) === */
-
-/* 公式【定义处】：{#eq:xxx} -> (式1) */
-.pandoc-eq.pandoc-def {
-    color: #6a1b9a;                 /* 深紫色文字 */
-    background-color: #f3e5f5;      /* 极浅紫背景 */
-    border: 1px dashed #7b1fa2;     /* 紫色虚线边框 */
+.pandoc-section-title {
+    margin-top: 15px;
+    margin-bottom: 5px;
     font-weight: bold;
+    font-size: 0.9em;
+    display: flex;
+    justify-content: space-between;
 }
 
-/* 公式【引用处】：@eq:xxx -> (式1) */
-.pandoc-eq.pandoc-ref {
-    color: #9c27b0;                 /* 标准紫文字 */
-    background-color: rgba(156, 39, 176, 0.1); /* 浅紫透明背景 */
-    border: 1px solid rgba(156, 39, 176, 0.3); /* 浅紫实线边框 */
-}
-
-/* === 4. 鼠标悬停通用效果 === */
-.pandoc-widget:hover {
-    opacity: 0.8;
-    transform: translateY(-1px); /* 微微上浮 */
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1); /* 加一点阴影 */
-
-}
-
-/* === 自动补全菜单样式 === */
-.pandoc-suggest-label {
-    font-weight: bold;
-    color: var(--text-accent); /* 使用 Obsidian 主题色 */
-    margin-right: 8px;
-}
-
-.pandoc-suggest-id {
-    color: var(--text-muted);
+.pandoc-outline-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-bottom: 2px;
     font-size: 0.85em;
 }
+.pandoc-outline-item:hover {
+    background-color: var(--background-modifier-hover);
+}
+
+/* 侧边栏状态颜色 */
+.pandoc-item-normal { color: var(--text-normal); }
+.pandoc-item-unused { color: #e67e22; } /* 橙色：未使用 */
+.pandoc-item-broken { color: #d32f2f; font-weight: bold; } /* 红色：引用失效 */
+.pandoc-item-missing-id { color: #7f8c8d; font-style: italic; } /* 灰色：未定义ID */
+
+.pandoc-tag {
+    font-size: 0.75em;
+    opacity: 0.7;
+    margin-left: 8px;
+}
+
+/* === 7. 辅助 === */
+.pandoc-gap { display: none; }
+.pandoc-suggest-label { font-weight: bold; color: var(--text-accent); margin-right: 8px; }
+.pandoc-suggest-id { color: var(--text-muted); font-size: 0.85em; }
