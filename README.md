@@ -181,6 +181,18 @@ To get the full academic writing preview experience, we highly recommend using t
 * **引用**：`@eq:mass-energy` -> 渲染为 **式1**（紫色实线边框）。
 * **命令**：运行 **"插入公式ID (Insert Equation ID)"** 命令可快速插入带时间戳的 `{#eq:...}` 标签。
 
+**4. 英文题注（学位论文模板）**
+
+`custom-style` 题注 div（如 `Figure Caption EN` / `Table Caption EN`）内含 `[-@fig:id]` 的行，会以**与中文题注完全相同的样式**整行渲染（颜色、加粗、居中、间距均跟随插件设置），紧跟中文题注显示；该 div 的 `:::` 围栏行（连同开栏上方的一个空行）同时隐藏，预览更清爽。光标移入隐藏区域会自动恢复原文显示，不影响编辑。无 `[-@id]` 的 div 与非题注 div 不受任何影响：
+
+```markdown
+![不同润湿性岩石表面油水的分布特征](img.png){#fig:1-2}
+
+::: {custom-style="Figure Caption EN"}
+Fig. [-@fig:1-2] Distribution characteristics of oil and water
+:::
+```
+
 ## 🤝 推荐搭配
 
 为了获得完整的学术写作预览体验，强烈推荐配合以下插件使用：
