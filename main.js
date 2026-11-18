@@ -27,7 +27,11 @@ const DEFAULT_SETTINGS = {
     captionTopOffset: 6,
     captionBottomDistance: 12,
     referenceColor: "#1e88e5",
-    referenceBold: false
+    referenceBold: false,
+
+    // 双语题注（学位论文）
+    enableEnCaption: true,
+    hideCaptionFence: true
 };
 
 // === 辅助函数 ===
@@ -314,7 +318,8 @@ function buildDecorationSpecs(text) {
     const openDivs = [];
     let lastBlankStart = -1; // 上一行为空行时的行首位置
     const lines = text.split('\n');
-    for (let i = 0; i < lines.length; i++) {
+    const enCaptionEnabled = currentSettings.enableEnCaption; // 关闭双语题注时跳过整个扫描
+    for (let i = 0; enCaptionEnabled && i < lines.length; i++) {
         const line = lines[i];
         const lineStart = linePos;
         const lineEnd = lineStart + line.length;
@@ -329,7 +334,7 @@ function buildDecorationSpecs(text) {
                 openDivs.push({ isCaption, openHideRange: isCaption ? [hideStart, lineEnd + 1] : null, transformed: false });
             } else if (openDivs.length > 0) {
                 const div = openDivs.pop();
-                if (div.transformed) {
+                if (div.transformed && currentSettings.hideCaptionFence) {
                     // 题注行已渲染：隐藏开栏行（含上方空行）与闭栏行
                     specs.push(Decoration.replace({ inclusive: false }).range(div.openHideRange[0], div.openHideRange[1]));
                     specs.push(Decoration.replace({ inclusive: false }).range(lineStart, lineEnd + 1));
@@ -576,7 +581,7 @@ class PandocLivePreviewSettingTab extends PluginSettingTab {
     display() {
         const { containerEl } = this;
         containerEl.empty();
-        containerEl.createEl('h2', { text: 'Pandoc Live Preview v3.8.0 设置' });
+        containerEl.createEl('h2', { text: 'Pandoc Live Preview v3.9.0 设置' });
 
         new Setting(containerEl).setName('PicGo 上传接口').addText(t => t.setValue(this.plugin.settings.picgoUrl).onChange(async v => { this.plugin.settings.picgoUrl = v; await this.plugin.saveSettings(); }));
         new Setting(containerEl).setName('剪切板自动上传').addToggle(t => t.setValue(this.plugin.settings.autoUpload).onChange(async v => { this.plugin.settings.autoUpload = v; await this.plugin.saveSettings(); }));
@@ -602,6 +607,11 @@ class PandocLivePreviewSettingTab extends PluginSettingTab {
         new Setting(containerEl).setName('图片前缀').addText(t => t.setValue(this.plugin.settings.figPrefix).onChange(async v => { this.plugin.settings.figPrefix = v; currentSettings.figPrefix = v; await this.plugin.saveSettings(); this.plugin.refreshEditors(); }));
         new Setting(containerEl).setName('表格前缀').addText(t => t.setValue(this.plugin.settings.tblPrefix).onChange(async v => { this.plugin.settings.tblPrefix = v; currentSettings.tblPrefix = v; await this.plugin.saveSettings(); this.plugin.refreshEditors(); }));
         new Setting(containerEl).setName('公式前缀').addText(t => t.setValue(this.plugin.settings.eqPrefix).onChange(async v => { this.plugin.settings.eqPrefix = v; currentSettings.eqPrefix = v; await this.plugin.saveSettings(); this.plugin.refreshEditors(); }));
+
+        containerEl.createEl('h3', { text: '双语题注（学位论文）' });
+        new Setting(containerEl).setName('渲染英文题注').setDesc('识别题注 div（custom-style 名含 Caption/题注，如 "Figure Caption EN"）内的 Fig. [-@fig:id] 行，以与中文题注相同的样式渲染为「Fig. 1 英文标题」。关闭后该行保持原始文本。').addToggle(t => t.setValue(this.plugin.settings.enableEnCaption).onChange(async v => { this.plugin.settings.enableEnCaption = v; await this.plugin.saveSettings(); this.plugin.refreshEditors(); }));
+        new Setting(containerEl).setName('隐藏题注围栏行').setDesc('渲染英文题注时，同时隐藏 ::: {custom-style=…} 与 ::: 围栏行及其上方空行，中英文题注紧贴成组显示。关闭可保留围栏。').addToggle(t => t.setValue(this.plugin.settings.hideCaptionFence).onChange(async v => { this.plugin.settings.hideCaptionFence = v; await this.plugin.saveSettings(); this.plugin.refreshEditors(); }));
+        new Setting(containerEl).setName('插入英文题注模板').setDesc('在中文题注下方运行命令，自动识别最近的图表 ID 并生成英文题注骨架（引用编号已填好），补全英文翻译即可。也可在命令面板搜索「插入英文题注模板」。').addButton(b => b.setButtonText('生成模板').setCta().onClick(() => { this.app.commands.executeCommandById('pandoc-live-preview:insert-en-caption'); }));
     }
 }
 
@@ -617,6 +627,29 @@ module.exports = class PandocLivePreview extends Plugin {
         this.addCommand({ id: 'insert-fig-id', name: 'Insert Figure ID', editorCallback: (e) => e.replaceSelection(`{#fig:${getTimestamp()}}`) });
         this.addCommand({ id: 'insert-tbl-id', name: 'Insert Table ID', editorCallback: (e) => e.replaceSelection(`{#tbl:${getTimestamp()}}`) });
         this.addCommand({ id: 'insert-eq-id', name: 'Insert Equation ID', editorCallback: (e) => e.replaceSelection(`{#eq:${getTimestamp()}}`) });
+        this.addCommand({
+            id: 'insert-en-caption',
+            name: '插入英文题注模板 (Insert EN Caption Template)',
+            editorCallback: (editor) => {
+                // 向上找最近的图表定义，自动填入引用与对应样式名
+                const offset = editor.posToOffset(editor.getCursor('from'));
+                const before = editor.getValue().slice(0, offset);
+                const matches = Array.from(before.matchAll(/\{#(fig|tbl|eq):([a-zA-Z0-9_\-]+)/g));
+                const last = matches.length > 0 ? matches[matches.length - 1] : null;
+                let styleName, lead;
+                if (last && last[1] === 'tbl') { styleName = 'Table Caption EN'; lead = 'Table'; }
+                else if (last && last[1] === 'eq') { styleName = 'Equation Caption EN'; lead = 'Equation'; }
+                else { styleName = 'Figure Caption EN'; lead = 'Fig.'; }
+                if (!last) new Notice('未在上方找到图表定义（{#fig:…} / {#tbl:…}），请手动补全 [-@fig:id] 引用');
+                const ref = last ? `[-@${last[1]}:${last[2]}] ` : '';
+                const body = `${lead} ${ref}English caption here`;
+                const block = `\n\n::: {custom-style="${styleName}"}\n${body}\n:::`;
+                editor.replaceSelection(block);
+                // 光标移到翻译输入点（"English caption here" 处）
+                const target = offset + block.indexOf(body) + `${lead} `.length + ref.length;
+                editor.setCursor(editor.offsetToPos(target));
+            }
+        });
         this.addCommand({ id: 'open-pandoc-outline', name: '打开图表管理面板 (Pandoc Manager)', callback: () => this.activateView() });
         this.addRibbonIcon('image-file', 'Pandoc 图表管理', () => { this.activateView(); });
         this.registerEvent(this.app.workspace.on('editor-paste', this.handleImagePaste.bind(this)));
