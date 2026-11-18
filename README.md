@@ -193,6 +193,20 @@ Fig. [-@fig:1-2] Distribution characteristics of oil and water
 :::
 ```
 
+**5. 双语题注设置与模板命令**
+
+设置 → 双语题注（学位论文）：
+
+- **渲染英文题注**：开关英文题注渲染（识别 `custom-style` 名含 Caption/题注 的 div 内的 `[-@fig:id]` 行）
+- **隐藏题注围栏行**：开关渲染时的 `:::` 围栏隐藏
+- **插入英文题注模板**（或命令面板「插入英文题注模板」）：自动识别光标上方最近的图表 ID，生成英文题注骨架并把光标放到翻译输入点：
+
+```markdown
+::: {custom-style="Figure Caption EN"}
+Fig. [-@fig:1-2] English caption here
+:::
+```
+
 ## 🤝 推荐搭配
 
 为了获得完整的学术写作预览体验，强烈推荐配合以下插件使用：
