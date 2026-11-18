@@ -133,6 +133,12 @@ function prefixOf(type) {
     return currentSettings.eqPrefix;
 }
 
+// fenced div 围栏行：::: {custom-style="..."} ... :::
+// （仅用于识别题注 div 的范围，不改变围栏行本身的显示）
+const FENCE_REGEX = /^\s*(:::+)[ \t]*(\{.*\})?[ \t]*$/;
+// 题注 div 内的英文题注行：Fig. [-@fig:id] English Caption / Table [-@tbl:id] ...
+const CAPTION_LINE_REGEX = /^(\s*)(.*?)[ \t]*\[-@(fig|tbl|eq):([a-zA-Z0-9_\-]+)\][ \t]*([^\n\r]*)$/;
+
 function scanDocumentStats(text, settings) {
     const definitions = [];
     const references = [];
@@ -298,14 +304,57 @@ function buildDecorationSpecs(text) {
         }).range(start, end));
     }
 
+    // 学位论文英文题注：custom-style 题注 div 内含 [-@fig:id] 的行，
+    // 整行替换为与中文题注（定义处）完全同样式的 LabelWidget（同颜色/加粗/居中/间距，跟随设置）
+    const captionLineRanges = [];
+    let linePos = 0;
+    const openDivs = [];
+    for (const line of text.split('\n')) {
+        const lineStart = linePos;
+        const lineEnd = lineStart + line.length;
+        linePos = lineEnd + 1;
+
+        const fenceM = line.match(FENCE_REGEX);
+        if (fenceM) {
+            if (fenceM[2]) {
+                const csM = fenceM[2].match(/custom-style[ \t]*=[ \t]*"([^"]+)"/);
+                openDivs.push(csM ? /caption|题注/i.test(csM[1]) : false);
+            } else if (openDivs.length > 0) {
+                openDivs.pop();
+            }
+            continue;
+        }
+        if (openDivs.length > 0 && openDivs[openDivs.length - 1]) {
+            const capM = line.match(CAPTION_LINE_REGEX);
+            if (capM) {
+                const type = capM[3];
+                const id = capM[4];
+                const number = numbers.has(`${type}:${id}`) ? numbers.get(`${type}:${id}`) : "?";
+                const leadText = capM[2].trim();
+                const widgetText = leadText ? `${leadText} ${number}` : `${number}`;
+                captionLineRanges.push([lineStart + capM[1].length, lineEnd]);
+                specs.push(Decoration.replace({
+                    widget: new LabelWidget(widgetText, type, true, capM[5], "", false, null, currentSettings, "normal"),
+                    inclusive: false
+                }).range(lineStart + capM[1].length, lineEnd));
+            }
+        }
+    }
+    const inCaptionLine = (pos) => {
+        for (const [s, e] of captionLineRanges) if (pos >= s && pos < e) return true;
+        return false;
+    };
+
     let defMatch;
     while ((defMatch = DEF_REGEX.exec(text)) !== null) {
+        if (inCaptionLine(defMatch.index)) continue;
         const g = defMatch.groups;
         addSpec(defMatch.index, defMatch.index + defMatch[0].length, g.dType, g.dId, true);
     }
 
     let refMatch;
     while ((refMatch = REF_REGEX.exec(text)) !== null) {
+        if (inCaptionLine(refMatch.index)) continue;
         const hasParen = (refMatch[1].includes('(') && refMatch[5].includes(')'));
         addSpec(refMatch.index, refMatch.index + refMatch[0].length, refMatch[2], refMatch[3], false, refMatch[4] || "", hasParen);
     }
@@ -511,7 +560,7 @@ class PandocLivePreviewSettingTab extends PluginSettingTab {
     display() {
         const { containerEl } = this;
         containerEl.empty();
-        containerEl.createEl('h2', { text: 'Pandoc Live Preview v3.7.1 设置' });
+        containerEl.createEl('h2', { text: 'Pandoc Live Preview v3.8.0 设置' });
 
         new Setting(containerEl).setName('PicGo 上传接口').addText(t => t.setValue(this.plugin.settings.picgoUrl).onChange(async v => { this.plugin.settings.picgoUrl = v; await this.plugin.saveSettings(); }));
         new Setting(containerEl).setName('剪切板自动上传').addToggle(t => t.setValue(this.plugin.settings.autoUpload).onChange(async v => { this.plugin.settings.autoUpload = v; await this.plugin.saveSettings(); }));
