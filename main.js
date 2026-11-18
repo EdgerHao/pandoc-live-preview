@@ -319,6 +319,9 @@ function buildDecorationSpecs(text) {
     let lastBlankStart = -1; // 上一行为空行时的行首位置
     const lines = text.split('\n');
     const enCaptionEnabled = currentSettings.enableEnCaption; // 关闭双语题注时跳过整个扫描
+    // 英文题注的上方间距归零：中英文题注之间的间距只由中文题注的下方间距（captionBottomDistance）决定，
+    // 避免两者边距叠加导致间距过宽
+    const enCaptionSettings = Object.assign({}, currentSettings, { captionTopOffset: 0 });
     for (let i = 0; enCaptionEnabled && i < lines.length; i++) {
         const line = lines[i];
         const lineStart = linePos;
@@ -335,9 +338,11 @@ function buildDecorationSpecs(text) {
             } else if (openDivs.length > 0) {
                 const div = openDivs.pop();
                 if (div.transformed && currentSettings.hideCaptionFence) {
-                    // 题注行已渲染：隐藏开栏行（含上方空行）与闭栏行
+                    // 题注行已渲染：隐藏开栏行（含上方空行）与闭栏行（含下方空行，避免题注与后文间残留整行空白）
                     specs.push(Decoration.replace({ inclusive: false }).range(div.openHideRange[0], div.openHideRange[1]));
-                    specs.push(Decoration.replace({ inclusive: false }).range(lineStart, lineEnd + 1));
+                    let closeHideEnd = lineEnd + 1;
+                    if (i + 1 < lines.length && lines[i + 1].trim() === '') closeHideEnd = lineEnd + 1 + lines[i + 1].length + 1;
+                    specs.push(Decoration.replace({ inclusive: false }).range(lineStart, closeHideEnd));
                 }
             }
             lastBlankStart = -1;
@@ -353,7 +358,7 @@ function buildDecorationSpecs(text) {
                 const widgetText = leadText ? `${leadText} ${number}` : `${number}`;
                 captionLineRanges.push([lineStart + capM[1].length, lineEnd]);
                 specs.push(Decoration.replace({
-                    widget: new LabelWidget(widgetText, type, true, capM[5], "", false, null, currentSettings, "normal"),
+                    widget: new LabelWidget(widgetText, type, true, capM[5], "", false, null, enCaptionSettings, "normal"),
                     inclusive: false
                 }).range(lineStart + capM[1].length, lineEnd));
                 openDivs[openDivs.length - 1].transformed = true;
@@ -581,7 +586,7 @@ class PandocLivePreviewSettingTab extends PluginSettingTab {
     display() {
         const { containerEl } = this;
         containerEl.empty();
-        containerEl.createEl('h2', { text: 'Pandoc Live Preview v3.9.0 设置' });
+        containerEl.createEl('h2', { text: 'Pandoc Live Preview v3.9.1 设置' });
 
         new Setting(containerEl).setName('PicGo 上传接口').addText(t => t.setValue(this.plugin.settings.picgoUrl).onChange(async v => { this.plugin.settings.picgoUrl = v; await this.plugin.saveSettings(); }));
         new Setting(containerEl).setName('剪切板自动上传').addToggle(t => t.setValue(this.plugin.settings.autoUpload).onChange(async v => { this.plugin.settings.autoUpload = v; await this.plugin.saveSettings(); }));
